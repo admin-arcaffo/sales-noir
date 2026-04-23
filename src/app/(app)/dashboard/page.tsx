@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useEffect, useState } from "react";
 import { useAuth } from '@clerk/nextjs';
 import { usePathname, useRouter } from 'next/navigation';
@@ -16,19 +18,21 @@ const tempColors = {
 };
 
 export default function DashboardPage() {
-  const { userId } = useAuth();
+  const { userId, isLoaded } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
-  // Redirect to sign-in if not authenticated
-  if (!userId && pathname !== '/sign-in' && pathname !== '/sign-up') {
-    router.push('/sign-in');
-    return null; // Prevent rendering while redirecting
-  }
+  // Redirect to sign-in if not authenticated (Is handled by middleware, but kept for client safety if needed)
+  useEffect(() => {
+    if (isLoaded && !userId) {
+      router.push('/sign-in');
+    }
+  }, [isLoaded, userId, router]);
 
   const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
+    if (!userId) return;
     let alive = true;
 
     getDashboardData()
