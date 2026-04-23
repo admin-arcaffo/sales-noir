@@ -7,9 +7,9 @@ export default clerkMiddleware(async (auth, request) => {
     await auth.protect();
   }
 }, {
-  domain: 'sales.arcaffo.com',
-  signInUrl: 'sales.arcaffo.com/sign-in',
-  signUpUrl: 'sales.arcaffo.com/sign-up',
+  domain: process.env.NEXT_PUBLIC_CLERK_DOMAIN || 'sales.arcaffo.com',
+  signInUrl: '/sign-in',
+  signUpUrl: '/sign-up',
 });
 
 export const config = {
