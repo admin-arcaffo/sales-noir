@@ -3,7 +3,8 @@ import prisma from "@/lib/prisma";
 import OpenAI from "openai";
 import { downloadWhatsAppMedia, getWhatsAppMediaUrl } from "@/lib/whatsapp";
 import * as fs from "fs";
-import * as path from "os";
+import * as os from "os";
+import path from "path";
 import { randomUUID } from "crypto";
 
 // Initialize OpenAI client lazily to avoid issues during builds when API key might not be available
@@ -25,7 +26,7 @@ export const processAudioTranscript = inngest.createFunction(
     id: "process-audio-transcript", 
     name: "Transcrição de Áudio via Whisper",
     retries: 3,
-    triggers: [{ event: "whatsapp/audio.received" }],
+    triggers: { event: "whatsapp/audio.received" },
   },
   async ({ event, step }) => {
     const { messageId, mediaId, organizationId } = event.data;
@@ -68,8 +69,8 @@ export const processAudioTranscript = inngest.createFunction(
 
       // 4. Save to temp file (OpenAI requires a File object)
       const tempFilePath = await step.run("save-temp-file", async () => {
-        const tempDir = path.tmpdir();
-        const filePath = `${tempDir}/${randomUUID()}.ogg`; // WhatsApp uses OGG
+        const tempDir = os.tmpdir();
+        const filePath = path.join(tempDir, `${randomUUID()}.ogg`); // WhatsApp uses OGG
         fs.writeFileSync(filePath, Buffer.from(mediaBytes));
         return filePath;
       });

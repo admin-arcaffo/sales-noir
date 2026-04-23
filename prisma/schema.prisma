@@ -1,0 +1,292 @@
+// Sales Noir - Schema do Banco de Dados
+// PostgreSQL via Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// CORE: Organization & Users
+// ============================================================
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("free") // free, pro, enterprise
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  contacts            Contact[]
+  prompts             PromptTemplate[]
+  whatsappConnections WhatsAppConnection[]
+  auditLogs           AuditLog[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  clerkId        String   @unique
+  email          String   @unique
+  name           String?
+  role           String   @default("member") // owner, admin, member
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  analyses     AIAnalysis[]
+  tasks        Task[]
+  auditLogs    AuditLog[]
+}
+
+// ============================================================
+// WHATSAPP INTEGRATION
+// ============================================================
+
+model WhatsAppConnection {
+  id             String   @id @default(cuid())
+  organizationId String
+  phoneNumberId  String?  // Meta Business API phone number ID
+  wabaId         String?  // WhatsApp Business Account ID
+  accessToken    String?  @db.Text // Encrypted
+  status         String   @default("DISCONNECTED") // CONNECTED, DISCONNECTED, ERROR
+  lastSyncAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrationLogs IntegrationLog[]
+}
+
+// ============================================================
+// CONTACTS & CONVERSATIONS
+// ============================================================
+
+model Contact {
+  id             String   @id @default(cuid())
+  phone          String
+  name           String
+  company        String?
+  email          String?
+  avatarUrl      String?
+  origin         String?  // website, referral, ads, organic
+  interestArea   String?
+  potentialValue Float?
+  notes          String?  @db.Text
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  leadHistory   LeadStageHistory[]
+  tasks         Task[]
+
+  @@unique([phone, organizationId])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  contactId String
+  status    String   @default("OPEN") // OPEN, CLOSED, SNOOZED
+  stage     String   @default("PRIMEIRO_CONTATO")
+  // PRIMEIRO_CONTATO, QUALIFICACAO, APRESENTACAO_PROPOSTA, NEGOCIACAO, OBJECAO, FOLLOW_UP, FECHAMENTO, REATIVACAO
+  temperature String @default("COLD") // COLD, WARM, HOT
+  outcome     String? // WON, LOST, null
+  lastMessageAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages Message[]
+  analyses AIAnalysis[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  direction      String   // INBOUND, OUTBOUND
+  type           String   // TEXT, AUDIO, IMAGE, DOCUMENT, VIDEO, STICKER
+  content        String?  @db.Text
+  mediaUrl       String?
+  waMessageId    String?  @unique // WhatsApp message ID for dedup
+  timestamp      DateTime @default(now())
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  transcript   AudioTranscript?
+  media        Media?
+}
+
+// ============================================================
+// MEDIA & AUDIO TRANSCRIPTION
+// ============================================================
+
+model Media {
+  id        String   @id @default(cuid())
+  messageId String   @unique
+  mimeType  String
+  fileSize  Int?
+  storageKey String  // Vercel Blob or S3 key
+  originalUrl String?
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+model AudioTranscript {
+  id         String   @id @default(cuid())
+  messageId  String   @unique
+  text       String   @db.Text
+  confidence Float?
+  duration   Float?   // seconds
+  language   String?  @default("pt-BR")
+  provider   String   @default("whisper") // whisper, deepgram, etc.
+  status     String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  errorMsg   String?
+  retries    Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// AI ANALYSIS & SUGGESTIONS
+// ============================================================
+
+model AIAnalysis {
+  id                  String   @id @default(cuid())
+  conversationId      String
+  userId              String
+  summary             String   @db.Text
+  stage               String
+  leadClassification  String
+  urgency             String
+  riskLevel           String
+  painPoints          Json     // string[]
+  explicitObjections  Json     // string[]
+  implicitObjections  Json     // string[]
+  buyingSignals       Json     // string[]
+  recommendedPosture  String   @db.Text
+  whatToAvoid         String   @db.Text
+  nextConcreteStep    String   @db.Text
+  timeWindow          String?  // "24h", "7d", "all"
+  messageCount        Int?
+  processingTimeMs    Int?
+  createdAt           DateTime @default(now())
+
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id])
+  suggestedReplies SuggestedReply[]
+}
+
+model SuggestedReply {
+  id           String   @id @default(cuid())
+  analysisId   String
+  type         String   // DIRECT, CONSULTATIVE, WHATSAPP_SHORT
+  content      String   @db.Text
+  wasUsed      Boolean  @default(false)
+  wasEdited    Boolean  @default(false)
+  editedContent String? @db.Text
+  createdAt    DateTime @default(now())
+
+  analysis AIAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// LEAD TRACKING
+// ============================================================
+
+model LeadStageHistory {
+  id         String   @id @default(cuid())
+  contactId  String
+  fromStage  String
+  toStage    String
+  reason     String?
+  changedBy  String?  // userId or "system"
+  createdAt  DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// TASKS & FOLLOW-UPS
+// ============================================================
+
+model Task {
+  id          String    @id @default(cuid())
+  contactId   String?
+  userId      String
+  title       String
+  description String?   @db.Text
+  type        String    @default("FOLLOW_UP") // FOLLOW_UP, CALL, MEETING, PROPOSAL, OTHER
+  priority    String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status      String    @default("PENDING") // PENDING, IN_PROGRESS, DONE, CANCELLED
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  user    User     @relation(fields: [userId], references: [id])
+}
+
+// ============================================================
+// PROMPT MANAGEMENT
+// ============================================================
+
+model PromptTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  content        String   @db.Text
+  category       String   @default("analysis") // analysis, reply, follow_up, qualification
+  version        Int      @default(1)
+  isActive       Boolean  @default(true)
+  metadata       Json?    // tone, style, etc.
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slug, version])
+}
+
+// ============================================================
+// OBSERVABILITY & AUDIT
+// ============================================================
+
+model IntegrationLog {
+  id           String   @id @default(cuid())
+  connectionId String
+  event        String   // SYNC_START, SYNC_COMPLETE, WEBHOOK_RECEIVED, ERROR
+  direction    String?  // INBOUND, OUTBOUND
+  payload      Json?
+  statusCode   Int?
+  errorMsg     String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String   // ANALYZE, LOGIN, EXPORT, SETTINGS_CHANGE, STAGE_CHANGE
+  entity         String?  // conversation, contact, task, etc.
+  entityId       String?
+  metadata       Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+}

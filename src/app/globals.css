@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Noir / Noyer / Cinematic Palette */
+  --background: #09090b; /* Deep Charcoal */
+  --foreground: #fafafa; /* Zinc 50 */
+  
+  --card: #0c0c0e; /* Slightly lighter than background */
+  --card-foreground: #fafafa;
+  
+  --popover: #0c0c0e;
+  --popover-foreground: #fafafa;
+  
+  --primary: #ffffff;
+  --primary-foreground: #09090b;
+  
+  --secondary: #18181b; /* Zinc 900 */
+  --secondary-foreground: #fafafa;
+  
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa; /* Zinc 400 */
+  
+  --accent: #18181b;
+  --accent-foreground: #fafafa;
+  
+  --destructive: #450a0a; /* Deep Red */
+  --destructive-foreground: #fef2f2;
+  
+  --border: #27272a; /* Zinc 800 */
+  --input: #18181b;
+  --ring: #d4d4d8; /* Zinc 300 for focus */
+  
+  --radius: 0.5rem;
+
+  /* Custom Status Colors - Cinematic */
+  --status-hot: #f59e0b;     /* Amber 500 */
+  --status-warm: #fbbf24;    /* Amber 400 */
+  --status-cold: #3b82f6;    /* Blue 500 */
+  --status-success: #10b981; /* Emerald 500 */
+  --status-danger: #ef4444;  /* Red 500 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: 'Inter', sans-serif;
+  --font-display: 'Inter Tight', sans-serif;
+  
+  /* Noir Specific Shadows & Gradients */
+  --shadow-noir: 0 10px 40px -10px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-white selection:text-black;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight font-semibold;
+  }
+}
+
+@layer components {
+  .glass-noir {
+    @apply bg-card/60 backdrop-blur-xl border border-white/5;
+  }
+  
+  .glow-border {
+    @apply relative overflow-hidden after:absolute after:inset-0 after:rounded-[inherit] after:p-[1px] after:bg-gradient-to-br after:from-white/10 after:to-transparent after:content-[''] after:pointer-events-none;
+  }
+
+  .btn-noir {
+    @apply h-10 px-4 py-2 bg-white text-black font-semibold rounded-md transition-all hover:bg-zinc-200 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-noir-outline {
+    @apply h-10 px-4 py-2 border border-border bg-transparent text-foreground font-medium rounded-md transition-all hover:bg-accent active:scale-[0.98];
+  }
+}
+
+/* Custom Scrollbar for Noir Theme */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
