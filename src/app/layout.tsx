@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider domain={process.env.NEXT_PUBLIC_CLERK_DOMAIN || 'sales.arcaffo.com'}>
       <html
         lang="pt-BR"
         className={`${inter.variable} ${interTight.variable} h-full antialiased dark`}
