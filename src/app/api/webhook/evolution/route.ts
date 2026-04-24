@@ -90,6 +90,15 @@ export async function POST(req: Request) {
       // (Evolution envia o áudio em base64 ou URL, precisamos tratar depois)
       if (type === "AUDIO") {
          // Lógica de áudio para Evolution...
+      } else {
+        // Dispara a análise da conversa (texto)
+        await inngest.send({
+          name: "conversation/analyze-requested",
+          data: {
+            conversationId: activeConversation.id,
+            organizationId: orgId
+          }
+        });
       }
     }
 

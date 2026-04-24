@@ -108,7 +108,10 @@ export const processAudioTranscript = inngest.createFunction(
       });
 
       // 7. Optional: Auto-analyze if it's part of a conversation that needs it
-      // Can emit another event here like "conversation/analyze-requested"
+      await step.sendEvent("trigger-analysis", {
+        name: "conversation/analyze-requested",
+        data: { conversationId: event.data.conversationId || "" } // Need to pass conversationId from webhook
+      });
 
       return { success: true, messageId, transcript: transcriptText };
       
@@ -126,5 +129,128 @@ export const processAudioTranscript = inngest.createFunction(
       });
       throw error; // Let Inngest retry
     }
+  }
+);
+
+export const analyzeConversation = inngest.createFunction(
+  { 
+    id: "analyze-conversation", 
+    name: "Análise de Vendas via OpenAI",
+    retries: 2,
+    triggers: { event: "conversation/analyze-requested" },
+  },
+  async ({ event, step }) => {
+    const { conversationId, organizationId } = event.data;
+
+    // 1. Fetch conversation history
+    const conversation = await step.run("fetch-conversation", async () => {
+      return prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: {
+          messages: {
+            orderBy: { timestamp: "asc" },
+            take: 20, // Last 20 messages for context
+            include: { transcript: true }
+          },
+          contact: true
+        }
+      });
+    });
+
+    if (!conversation) throw new Error("Conversation not found");
+
+    // 2. Fetch Prompts (Orchestrator + Auxiliary)
+    const prompts = await step.run("fetch-prompts", async () => {
+      const orgId = organizationId || conversation.contact.organizationId;
+      return prisma.promptTemplate.findMany({
+        where: { 
+          organizationId: orgId,
+          isActive: true
+        }
+      });
+    });
+
+    const orchestrator = prompts.find(p => p.category === "orchestrator")?.content || "Analise a conversa de vendas a seguir. Retorne um JSON com: summary, stage, leadClassification (FRIO, MORNO, QUENTE), urgency (ALTA, MEDIA, BAIXA), riskLevel (ALTO, MEDIO, BAIXO), painPoints (array), explicitObjections (array), implicitObjections (array), buyingSignals (array), recommendedPosture, whatToAvoid, nextConcreteStep, timeWindow, e uma suggestedReply.";
+    const auxiliaries = prompts.filter(p => p.category === "auxiliary");
+    
+    let systemPrompt = orchestrator;
+    if (auxiliaries.length > 0) {
+      systemPrompt += "\n\n=== CONTEXTOS AUXILIARES ===\n";
+      auxiliaries.forEach(aux => {
+        systemPrompt += `\n--- ${aux.name} ---\n${aux.content}\n`;
+      });
+    }
+
+    // 3. Prepare messages for OpenAI
+    const messageHistory = conversation.messages.map(m => {
+      const role = m.direction === "INBOUND" ? "user" : "assistant";
+      const content = m.type === "AUDIO" && m.transcript?.text ? `[ÁUDIO TRANSCRITO]: ${m.transcript.text}` : m.content || "[Mídia não suportada]";
+      return { role: role as "user" | "assistant", content };
+    });
+
+    // 4. Call OpenAI
+    const analysisResult = await step.run("openai-analysis", async () => {
+      const openai = getOpenAI();
+      if (!openai) throw new Error("OPENAI_API_KEY not configured");
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini", // Or gpt-4-turbo
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messageHistory,
+          { role: "user", content: "Por favor, analise a conversa até o momento e retorne ESTRITAMENTE o objeto JSON solicitado no prompt do sistema." }
+        ]
+      });
+
+      const content = response.choices[0].message.content;
+      if (!content) throw new Error("No response from OpenAI");
+      
+      return JSON.parse(content);
+    });
+
+    // 5. Save Analysis to DB
+    await step.run("save-analysis", async () => {
+      // Find the first user in the org to assign the analysis
+      const user = await prisma.user.findFirst({
+        where: { organizationId: conversation.contact.organizationId }
+      });
+
+      if (!user) return; // Silent skip if no user
+
+      const analysis = await prisma.aIAnalysis.create({
+        data: {
+          conversationId,
+          userId: user.id,
+          summary: analysisResult.summary || "Resumo não gerado",
+          stage: analysisResult.stage || conversation.stage,
+          leadClassification: analysisResult.leadClassification || "FRIO",
+          urgency: analysisResult.urgency || "BAIXA",
+          riskLevel: analysisResult.riskLevel || "BAIXO",
+          painPoints: analysisResult.painPoints || [],
+          explicitObjections: analysisResult.explicitObjections || [],
+          implicitObjections: analysisResult.implicitObjections || [],
+          buyingSignals: analysisResult.buyingSignals || [],
+          recommendedPosture: analysisResult.recommendedPosture || "",
+          whatToAvoid: analysisResult.whatToAvoid || "",
+          nextConcreteStep: analysisResult.nextConcreteStep || "",
+          timeWindow: analysisResult.timeWindow || "24h",
+          messageCount: conversation.messages.length,
+          processingTimeMs: 0, // Could calculate duration
+        }
+      });
+
+      if (analysisResult.suggestedReply) {
+        await prisma.suggestedReply.create({
+          data: {
+            analysisId: analysis.id,
+            type: "DIRECT",
+            content: typeof analysisResult.suggestedReply === "string" ? analysisResult.suggestedReply : JSON.stringify(analysisResult.suggestedReply),
+          }
+        });
+      }
+    });
+
+    return { success: true, conversationId };
   }
 );
