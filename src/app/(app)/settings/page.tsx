@@ -10,6 +10,7 @@ import {
   type PromptTemplateData,
   type SettingsData,
 } from "@/actions/crm";
+import { WhatsAppQR } from "./_components/WhatsAppQR";
 
 const CATEGORIES = ["analysis", "reply", "follow_up", "qualification"] as const;
 
@@ -172,56 +173,51 @@ export default function SettingsPage() {
           </div>
         ))}
 
-        <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-200">Configuração do WhatsApp Business</h2>
-            <p className="text-xs text-zinc-500 mt-1">
-              Configure a conexão usada para ingestão do webhook e envio outbound. Se o token ficar em branco, o valor já salvo é preservado.
-            </p>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-200">Configuração API Oficial (Meta)</h2>
+              <p className="text-xs text-zinc-500 mt-1">
+                Use esta opção se você tiver uma conta no WhatsApp Business Platform da Meta.
+              </p>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              value={whatsAppForm.phoneNumberId}
-              onChange={(event) => setWhatsAppForm((current) => ({ ...current, phoneNumberId: event.target.value }))}
-              placeholder="Phone Number ID"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-            />
-            <input
-              value={whatsAppForm.wabaId}
-              onChange={(event) => setWhatsAppForm((current) => ({ ...current, wabaId: event.target.value }))}
-              placeholder="WABA ID"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-            />
-            <input
-              value={whatsAppForm.accessToken}
-              onChange={(event) => setWhatsAppForm((current) => ({ ...current, accessToken: event.target.value }))}
-              placeholder={data?.whatsappConnection.hasAccessToken ? "Token atual preservado. Informe apenas para trocar." : "Access Token"}
-              className="w-full md:col-span-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-            />
-          </div>
+            <div className="grid grid-cols-1 gap-3">
+              <input
+                value={whatsAppForm.phoneNumberId}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, phoneNumberId: event.target.value }))}
+                placeholder="Phone Number ID"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+              <input
+                value={whatsAppForm.wabaId}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, wabaId: event.target.value }))}
+                placeholder="WABA ID"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+              <input
+                value={whatsAppForm.accessToken}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, accessToken: event.target.value }))}
+                placeholder={data?.whatsappConnection.hasAccessToken ? "Token atual preservado" : "Access Token"}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+            </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <span className="px-2 py-1 rounded border border-white/10 bg-white/5">
-              Status atual: {data?.whatsappConnection.status || "DISCONNECTED"}
-            </span>
-            <span className="px-2 py-1 rounded border border-white/10 bg-white/5">
-              Token salvo: {data?.whatsappConnection.hasAccessToken ? "sim" : "não"}
-            </span>
-            <span className="px-2 py-1 rounded border border-white/10 bg-white/5">
-              Webhook: `/api/webhook/whatsapp`
-            </span>
-          </div>
+            <button
+              onClick={() => void handleWhatsAppSave()}
+              disabled={isSavingWhatsApp}
+              className="w-full px-4 py-2 bg-white/5 border border-white/10 text-white rounded-lg text-sm font-semibold hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isSavingWhatsApp ? "Salvando..." : "Salvar Configuração Meta"}
+            </button>
+          </section>
 
-          <button
-            onClick={() => void handleWhatsAppSave()}
-            disabled={isSavingWhatsApp}
-            className="w-full md:w-auto px-4 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <Save className="w-4 h-4" />
-            {isSavingWhatsApp ? "Salvando conexão..." : "Salvar conexão do WhatsApp"}
-          </button>
-        </section>
+          <WhatsAppQR 
+            currentStatus={data?.whatsappConnection.status || 'DISCONNECTED'} 
+            instanceName={data?.whatsappConnection.instanceName}
+            instanceToken={data?.whatsappConnection.instanceToken}
+          />
+        </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-6 items-start">
           <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">

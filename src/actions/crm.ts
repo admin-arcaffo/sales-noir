@@ -587,6 +587,9 @@ export async function getSettingsData(): Promise<SettingsData> {
     whatsappLastSync: whatsappConnection?.lastSyncAt ? formatDateTime(whatsappConnection.lastSyncAt) : 'Nunca',
     whatsappConnection: {
       id: whatsappConnection?.id || null,
+      provider: whatsappConnection?.provider || 'META',
+      instanceName: whatsappConnection?.instanceName || null,
+      instanceToken: whatsappConnection?.instanceToken || null,
       phoneNumberId: whatsappConnection?.phoneNumberId || '',
       wabaId: whatsappConnection?.wabaId || '',
       hasAccessToken: Boolean(whatsappConnection?.accessToken || envWhatsAppToken),
