@@ -13,11 +13,24 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
     setIsLoading(true);
     try {
       const result = await createWhatsAppInstance();
+      
+      if ('error' in result) {
+        alert(result.error);
+        return;
+      }
+
       const qr = await getWhatsAppQrCode(result.instanceName, result.instanceToken);
+      
+      if ('error' in qr) {
+        alert(qr.error);
+        return;
+      }
+
       setQrCode(qr.base64);
       setStatus('QRCODE');
     } catch (error) {
       console.error(error);
+      alert("Ocorreu um erro inesperado ao tentar gerar o QR Code.");
     } finally {
       setIsLoading(false);
     }
