@@ -16,25 +16,34 @@ export async function createWhatsAppInstance() {
     // 2. Cria a instância na Evolution API
     const result = await evolution.createInstance(instanceName);
     
-    // 3. Salva ou atualiza a conexão no banco
-    const connection = await prisma.whatsAppConnection.upsert({
-      where: { organizationId: orgId },
-      update: {
-        provider: 'EVOLUTION',
-        instanceName: instanceName,
-        instanceToken: result.hash, // O token gerado pela Evolution
-        status: 'DISCONNECTED'
-      },
-      create: {
-        organizationId: orgId,
-        provider: 'EVOLUTION',
-        instanceName: instanceName,
-        instanceToken: result.hash,
-        status: 'DISCONNECTED'
-      }
+    // 3. Busca conexão existente
+    const existingConnection = await prisma.whatsAppConnection.findFirst({
+      where: { organizationId: orgId }
     });
 
-    // 4. Configura o Webhook automaticamente
+    const data = {
+      provider: 'EVOLUTION',
+      instanceName: instanceName,
+      instanceToken: result.hash,
+      status: 'DISCONNECTED'
+    };
+
+    // 4. Salva ou atualiza no banco
+    if (existingConnection) {
+      await prisma.whatsAppConnection.update({
+        where: { id: existingConnection.id },
+        data
+      });
+    } else {
+      await prisma.whatsAppConnection.create({
+        data: {
+          ...data,
+          organizationId: orgId
+        }
+      });
+    }
+
+    // 5. Configura o Webhook automaticamente
     const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhook/evolution`;
     await evolution.setWebhook(instanceName, result.hash, webhookUrl);
 
