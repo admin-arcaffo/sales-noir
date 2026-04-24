@@ -614,8 +614,9 @@ export async function getSettingsData(): Promise<SettingsData> {
       })),
     };
   } catch (error: any) {
-    console.error("ERRO CRÍTICO no getSettingsData:", error?.message || error);
-    // Retorna um objeto vazio/padrão para não quebrar a UI
+    const errorMsg = error?.message || String(error);
+    console.error("ERRO CRÍTICO no getSettingsData:", errorMsg);
+    
     return {
       whatsappConnectionStatus: 'ERROR',
       whatsappLastSync: '-',
@@ -630,10 +631,12 @@ export async function getSettingsData(): Promise<SettingsData> {
         status: 'ERROR',
       },
       openAIStatus: 'Erro no Banco',
-      inngestStatus: 'Erro no Banco',
+      inngestStatus: errorMsg.includes('Prisma') ? 'Erro de Conexão Prisma' : 'Erro no Banco',
       promptTemplatesCount: 0,
       promptTemplates: [],
-    };
+      // Adicionando um campo extra (mesmo que não esteja no tipo original, o JS aceita)
+      errorMessage: errorMsg
+    } as any;
   }
 }
 

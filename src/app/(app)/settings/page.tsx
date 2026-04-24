@@ -141,6 +141,21 @@ export default function SettingsPage() {
           <p className="text-sm text-zinc-500 mt-1">Gerencie integrações, prompts e governança operacional</p>
         </div>
 
+        {(data as any)?.errorMessage && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2 text-red-400">
+              <Shield className="w-4 h-4" />
+              <p className="text-sm font-semibold">Erro de Conexão detectado</p>
+            </div>
+            <p className="text-xs text-red-300/70 font-mono break-all bg-black/20 p-2 rounded">
+              {(data as any).errorMessage}
+            </p>
+            <p className="text-[10px] text-zinc-500">
+              Dica: Verifique se a DATABASE_URL no Vercel está correta e se a senha do Supabase não contém caracteres especiais sem conversão (como @).
+            </p>
+          </div>
+        )}
+
         {settingsSections.map((section) => (
           <div key={section.title} className="space-y-3">
             <h2 className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">{section.title}</h2>
