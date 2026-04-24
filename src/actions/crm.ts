@@ -102,6 +102,9 @@ export type PromptTemplateData = {
 
 export type WhatsAppConnectionSettings = {
   id: string | null;
+  provider: string;
+  instanceName: string | null;
+  instanceToken: string | null;
   phoneNumberId: string;
   wabaId: string;
   hasAccessToken: boolean;
@@ -758,6 +761,9 @@ export async function saveWhatsAppConnectionSettings(input: {
 
   return {
     id: savedConnection.id,
+    provider: savedConnection.provider,
+    instanceName: savedConnection.instanceName,
+    instanceToken: savedConnection.instanceToken,
     phoneNumberId: savedConnection.phoneNumberId || '',
     wabaId: savedConnection.wabaId || '',
     hasAccessToken: Boolean(savedConnection.accessToken),
