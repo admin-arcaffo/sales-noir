@@ -13,14 +13,14 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
     setIsLoading(true);
     try {
       const result = await createWhatsAppInstance();
-      
+
       if ('error' in result) {
         alert(result.error);
         return;
       }
 
       const qr = await getWhatsAppQrCode(result.instanceName, result.instanceToken);
-      
+
       if ('error' in qr) {
         alert(qr.error);
         return;
@@ -41,7 +41,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
     setIsLoading(true);
     try {
       const qr = await getWhatsAppQrCode(instanceName, instanceToken);
-      
+
       if ('error' in qr) {
         alert(qr.error);
         return;
@@ -79,9 +79,9 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
             <p className="text-xs text-zinc-500">Escaneie o código para vincular seu WhatsApp</p>
           </div>
         </div>
-        
+
         {qrCode && (
-          <button 
+          <button
             onClick={refreshQr}
             className="p-2 hover:bg-white/5 rounded-lg transition-colors"
             title="Atualizar QR Code"
@@ -111,7 +111,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
             <img src={qrCode} alt="WhatsApp QR Code" className="w-64 h-64" />
           </div>
         )}
-        
+
         {isLoading && qrCode && (
           <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-white animate-spin" />

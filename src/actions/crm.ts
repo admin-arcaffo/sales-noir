@@ -571,47 +571,70 @@ export async function getConversations(): Promise<ConversationData[]> {
 }
 
 export async function getSettingsData(): Promise<SettingsData> {
-  const workspace = await getCurrentWorkspace();
-  const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || '';
+  try {
+    const workspace = await getCurrentWorkspace();
+    const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || '';
 
-  const [whatsappConnection, promptTemplates] = await Promise.all([
-    prisma.whatsAppConnection.findFirst({
-      where: { organizationId: workspace.organizationId },
-      orderBy: { updatedAt: 'desc' },
-    }),
-    prisma.promptTemplate.findMany({
-      where: { organizationId: workspace.organizationId },
-      orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
-    }),
-  ]);
+    const [whatsappConnection, promptTemplates] = await Promise.all([
+      prisma.whatsAppConnection.findFirst({
+        where: { organizationId: workspace.organizationId },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.promptTemplate.findMany({
+        where: { organizationId: workspace.organizationId },
+        orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
+      }),
+    ]);
 
-  return {
-    whatsappConnectionStatus: whatsappConnection?.status || 'DISCONNECTED',
-    whatsappLastSync: whatsappConnection?.lastSyncAt ? formatDateTime(whatsappConnection.lastSyncAt) : 'Nunca',
-    whatsappConnection: {
-      id: whatsappConnection?.id || null,
-      provider: whatsappConnection?.provider || 'META',
-      instanceName: whatsappConnection?.instanceName || null,
-      instanceToken: whatsappConnection?.instanceToken || null,
-      phoneNumberId: whatsappConnection?.phoneNumberId || '',
-      wabaId: whatsappConnection?.wabaId || '',
-      hasAccessToken: Boolean(whatsappConnection?.accessToken || envWhatsAppToken),
-      status: whatsappConnection?.status || 'DISCONNECTED',
-    },
-    openAIStatus: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dummy_key' ? 'Configurado' : 'Pendente',
-    inngestStatus: process.env.INNGEST_EVENT_KEY ? 'Ativo' : 'Pendente',
-    promptTemplatesCount: promptTemplates.length,
-    promptTemplates: promptTemplates.map((template) => ({
-      id: template.id,
-      name: template.name,
-      slug: template.slug,
-      category: template.category,
-      version: template.version,
-      isActive: template.isActive,
-      content: template.content,
-      updatedAt: template.updatedAt.toISOString(),
-    })),
-  };
+    return {
+      whatsappConnectionStatus: whatsappConnection?.status || 'DISCONNECTED',
+      whatsappLastSync: whatsappConnection?.lastSyncAt ? formatDateTime(whatsappConnection.lastSyncAt) : 'Nunca',
+      whatsappConnection: {
+        id: whatsappConnection?.id || null,
+        provider: whatsappConnection?.provider || 'META',
+        instanceName: whatsappConnection?.instanceName || null,
+        instanceToken: whatsappConnection?.instanceToken || null,
+        phoneNumberId: whatsappConnection?.phoneNumberId || '',
+        wabaId: whatsappConnection?.wabaId || '',
+        hasAccessToken: Boolean(whatsappConnection?.accessToken || envWhatsAppToken),
+        status: whatsappConnection?.status || 'DISCONNECTED',
+      },
+      openAIStatus: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dummy_key' ? 'Configurado' : 'Pendente',
+      inngestStatus: process.env.INNGEST_EVENT_KEY ? 'Ativo' : 'Pendente',
+      promptTemplatesCount: promptTemplates.length,
+      promptTemplates: promptTemplates.map((template) => ({
+        id: template.id,
+        name: template.name,
+        slug: template.slug,
+        category: template.category,
+        version: template.version,
+        isActive: template.isActive,
+        content: template.content,
+        updatedAt: template.updatedAt.toISOString(),
+      })),
+    };
+  } catch (error: any) {
+    console.error("ERRO CRÍTICO no getSettingsData:", error?.message || error);
+    // Retorna um objeto vazio/padrão para não quebrar a UI
+    return {
+      whatsappConnectionStatus: 'ERROR',
+      whatsappLastSync: '-',
+      whatsappConnection: {
+        id: null,
+        provider: 'META',
+        instanceName: null,
+        instanceToken: null,
+        phoneNumberId: '',
+        wabaId: '',
+        hasAccessToken: false,
+        status: 'ERROR',
+      },
+      openAIStatus: 'Erro no Banco',
+      inngestStatus: 'Erro no Banco',
+      promptTemplatesCount: 0,
+      promptTemplates: [],
+    };
+  }
 }
 
 export async function sendConversationMessage(conversationId: string, content: string) {
