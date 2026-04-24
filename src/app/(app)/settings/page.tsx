@@ -55,7 +55,170 @@ export default function SettingsPage() {
       });
   };
 
-// ... inside return ...
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const settingsSections = [
+    {
+      title: "Integrações",
+      items: [
+        {
+          icon: Webhook,
+          label: "WhatsApp Business",
+          desc: `Conexão: ${data?.whatsappConnectionStatus || "Carregando..."} • Último sync: ${data?.whatsappLastSync || "-"}`,
+          status: data?.whatsappConnectionStatus === "CONNECTED" ? "Conectado" : "Desconectado",
+        },
+        {
+          icon: Key,
+          label: "OpenAI API",
+          desc: "Configuração usada para análises e drafts de resposta",
+          status: data?.openAIStatus || "Carregando...",
+        },
+        {
+          icon: BrainCircuit,
+          label: "Inngest",
+          desc: "Filas e transcrição assíncrona de áudio",
+          status: data?.inngestStatus || "Carregando...",
+        },
+      ],
+    },
+    {
+      title: "Preferências",
+      items: [
+        { icon: Palette, label: "Aparência", desc: "Tema, tipografia e densidade visual", status: "" },
+        { icon: BrainCircuit, label: "Prompts do Agente", desc: `Templates salvos: ${data?.promptTemplatesCount ?? 0}`, status: "" },
+        { icon: Shield, label: "Segurança", desc: "Autenticação, permissões e logs", status: "" },
+      ],
+    },
+  ];
+
+  const handleTemplateSave = async () => {
+    if (!form.name.trim() || !form.content.trim()) {
+      return;
+    }
+
+    setIsSavingTemplate(true);
+    try {
+      await savePromptTemplateVersion(form);
+      loadSettings();
+    } catch (error) {
+      console.error("Failed to save prompt template:", error);
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  const handleWhatsAppSave = async () => {
+    setIsSavingWhatsApp(true);
+    try {
+      await saveWhatsAppConnectionSettings(whatsAppForm);
+      loadSettings();
+    } catch (error) {
+      console.error("Failed to save WhatsApp settings:", error);
+    } finally {
+      setIsSavingWhatsApp(false);
+    }
+  };
+
+  const handleActivateTemplate = async (template: PromptTemplateData) => {
+    setIsActivatingId(template.id);
+    try {
+      await setActivePromptTemplate(template.id);
+      loadSettings();
+    } catch (error) {
+      console.error("Failed to activate prompt template:", error);
+    } finally {
+      setIsActivatingId(null);
+    }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="p-8 max-w-5xl mx-auto space-y-8">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Configurações</h1>
+          <p className="text-sm text-zinc-500 mt-1">Gerencie integrações, prompts e governança operacional</p>
+        </div>
+
+        {settingsSections.map((section) => (
+          <div key={section.title} className="space-y-3">
+            <h2 className="text-xs uppercase tracking-wider text-zinc-500 font-semibold">{section.title}</h2>
+            <div className="space-y-2">
+              {section.items.map((item) => (
+                <div
+                  key={item.label}
+                  className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-4 flex items-center gap-4 hover:border-white/10 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                    <item.icon className="w-5 h-5 text-zinc-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-zinc-200">{item.label}</p>
+                    <p className="text-xs text-zinc-500">{item.desc}</p>
+                  </div>
+                  {item.status && (
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded border ${
+                      item.status === "Configurado" || item.status === "Ativo" || item.status === "Conectado"
+                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                        : "text-zinc-500 bg-zinc-800 border-zinc-700"
+                    }`}>
+                      {item.status}
+                    </span>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-zinc-700" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-200">Configuração API Oficial (Meta)</h2>
+              <p className="text-xs text-zinc-500 mt-1">
+                Use esta opção se você tiver uma conta no WhatsApp Business Platform da Meta.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              <input
+                value={whatsAppForm.phoneNumberId}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, phoneNumberId: event.target.value }))}
+                placeholder="Phone Number ID"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+              <input
+                value={whatsAppForm.wabaId}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, wabaId: event.target.value }))}
+                placeholder="WABA ID"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+              <input
+                value={whatsAppForm.accessToken}
+                onChange={(event) => setWhatsAppForm((current) => ({ ...current, accessToken: event.target.value }))}
+                placeholder={data?.whatsappConnection.hasAccessToken ? "Token atual preservado" : "Access Token"}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              />
+            </div>
+
+            <button
+              onClick={() => void handleWhatsAppSave()}
+              disabled={isSavingWhatsApp}
+              className="w-full px-4 py-2 bg-white/5 border border-white/10 text-white rounded-lg text-sm font-semibold hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isSavingWhatsApp ? "Salvando..." : "Salvar Configuração Meta"}
+            </button>
+          </section>
+
+          <WhatsAppQR 
+            currentStatus={data?.whatsappConnection.status || 'DISCONNECTED'} 
+            instanceName={data?.whatsappConnection.instanceName}
+            instanceToken={data?.whatsappConnection.instanceToken}
+          />
+        </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-6 items-start">
           <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">
             <div>
