@@ -41,6 +41,12 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
     setIsLoading(true);
     try {
       const qr = await getWhatsAppQrCode(instanceName, instanceToken);
+      
+      if ('error' in qr) {
+        alert(qr.error);
+        return;
+      }
+
       setQrCode(qr.base64);
     } catch (error) {
       console.error(error);
