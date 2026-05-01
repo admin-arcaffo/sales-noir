@@ -56,15 +56,19 @@ model WhatsAppConnection {
   // Official Meta API
   phoneNumberId  String?  // Meta Business API phone number ID
   wabaId         String?  // WhatsApp Business Account ID
-  accessToken    String?  @db.Text // Encrypted
+  accessToken    String?  @db.Text // Encrypted with AES-256-GCM
 
   // Evolution API (QR Code)
   provider       String   @default("META") // META or EVOLUTION
   instanceName   String?  @unique
-  instanceToken  String?  @db.Text
-  webhookSecret  String?
+  instanceToken  String?  @db.Text // Encrypted with AES-256-GCM
+  webhookSecret  String?  // Used for HMAC verification
 
   status         String   @default("DISCONNECTED") // CONNECTED, DISCONNECTED, ERROR, PAUSED
+  qrCodeCreatedAt DateTime? // Track when QR was generated (expires in ~120s)
+  lastConnectedAt DateTime? // Last successful connection timestamp
+  connectionAttempts Int @default(0) // Counter for rate limiting
+  lastConnectionAttemptAt DateTime? // Track rate limiting
   lastSyncAt     DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

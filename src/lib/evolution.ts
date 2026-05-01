@@ -118,5 +118,51 @@ export const evolution = {
     });
 
     return response.json();
+  },
+
+  /**
+   * Desconecta/logout de uma instância
+   */
+  disconnectInstance: async (instanceName: string, instanceToken: string) => {
+    if (!API_URL) {
+      throw new Error("Evolution API not configured");
+    }
+
+    const response = await fetch(`${API_URL}/instance/logout/${instanceName}`, {
+      method: "DELETE",
+      headers: {
+        "apikey": instanceToken,
+      },
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(`Failed to disconnect instance: ${data.message || JSON.stringify(data)}`);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Obtém o status de uma instância
+   */
+  getInstanceStatus: async (instanceName: string, instanceToken: string) => {
+    if (!API_URL) {
+      throw new Error("Evolution API not configured");
+    }
+
+    const response = await fetch(`${API_URL}/instance/fetch/${instanceName}`, {
+      method: "GET",
+      headers: {
+        "apikey": instanceToken,
+      },
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`Failed to fetch instance status: ${data.message || JSON.stringify(data)}`);
+    }
+
+    return data;
   }
 };
