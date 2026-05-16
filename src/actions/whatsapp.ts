@@ -60,7 +60,29 @@ export async function createWhatsAppInstance() {
     console.log(`Iniciando criação de instância: ${instanceName}`);
 
     // Create instance on Evolution API
-    const result = await evolution.createInstance(instanceName);
+    let result: any;
+    try {
+      result = await evolution.createInstance(instanceName);
+    } catch (error: any) {
+      if (error.message.includes("already in use")) {
+        console.log(`Instância ${instanceName} já existe. Recriando...`);
+        // We don't have the token to logout/delete properly via API if it's lost, 
+        // but Evolution v2 allows deletion with Global API Key on some endpoints or we can just try to fetch it.
+        // Best approach: try to delete it first using a specialized delete call if available.
+        try {
+          // Se a instância acabou de ser deletada, a API pode demorar uns segundos para liberar o nome
+          await evolution.deleteInstance(instanceName);
+          console.log(`Aguardando limpeza da instância ${instanceName}...`);
+          await new Promise(resolve => setTimeout(resolve, 3000)); // 3 seconds delay
+          
+          result = await evolution.createInstance(instanceName);
+        } catch (deleteError) {
+          throw error; // throw original if delete-recreate fails
+        }
+      } else {
+        throw error;
+      }
+    }
     console.log("Instância criada na Evolution com sucesso");
     
     // Encrypt the instance token before storage

@@ -43,3 +43,4 @@ vercel_output*.txt
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env*.local

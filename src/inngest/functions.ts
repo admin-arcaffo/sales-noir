@@ -21,82 +21,115 @@ const getOpenAI = () => {
 
 const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || "";
 
-export const processAudioTranscript = inngest.createFunction(
+import { decryptToken } from "@/lib/encryption";
+import { evolution } from "@/lib/evolution";
+
+export const processMediaMessage = inngest.createFunction(
   { 
-    id: "process-audio-transcript", 
-    name: "Transcrição de Áudio via Whisper",
+    id: "process-media-message", 
+    name: "Processamento de Mídia e Transcrição",
     retries: 3,
-    triggers: { event: "whatsapp/audio.received" },
+    triggers: { event: "whatsapp/media.received" },
   },
   async ({ event, step }) => {
-    const { messageId, mediaId, organizationId } = event.data;
+    const { messageId, waMessageId, conversationId, organizationId, instanceName, type } = event.data;
 
-    // 1. Fetch organization WhatsApp token
-    const org = await step.run("fetch-org-token", async () => {
+    // 1. Fetch connection to get token
+    const connection = await step.run("fetch-connection", async () => {
       const waConnection = await prisma.whatsAppConnection.findFirst({
-        where: { organizationId, status: "CONNECTED" },
+        where: { organizationId, instanceName, status: "CONNECTED" },
       });
 
-      const accessToken = waConnection?.accessToken || envWhatsAppToken;
-
-      if (!waConnection || !accessToken) {
-        throw new Error("WhatsApp connection not configured for this organization");
+      if (!waConnection || !waConnection.instanceToken) {
+        throw new Error("WhatsApp connection not configured or missing token");
       }
 
-      return { accessToken };
-    });
-
-    // 2. Mark transcript as processing
-    await step.run("update-transcript-status", async () => {
-      await prisma.audioTranscript.upsert({
-        where: { messageId },
-        update: { status: "PROCESSING" },
-        create: {
-          messageId,
-          text: "",
-          status: "PROCESSING"
-        }
-      });
+      return { instanceToken: waConnection.instanceToken };
     });
 
     try {
-      // 3. Download media from WhatsApp
-      const mediaBytes = await step.run("download-audio", async () => {
-        const mediaUrl = await getWhatsAppMediaUrl(org.accessToken, mediaId);
-        const buffer = await downloadWhatsAppMedia(org.accessToken, mediaUrl);
-        return Array.from(buffer.values());
+      // 2. Fetch media base64 from Evolution
+      const mediaResult = await step.run("fetch-media-base64", async () => {
+        const token = decryptToken(connection.instanceToken);
+        return await evolution.getBase64FromMediaMessage(instanceName, token, waMessageId);
       });
 
-      // 4. Save to temp file (OpenAI requires a File object)
+      if (!mediaResult || !mediaResult.base64) {
+        throw new Error("No media returned from Evolution API");
+      }
+
+      const mediaUrl = `data:${mediaResult.mimetype};base64,${mediaResult.base64}`;
+
+      // 3. Update message with media URL
+      await step.run("update-message-media", async () => {
+        await prisma.message.update({
+          where: { id: messageId },
+          data: { mediaUrl }
+        });
+      });
+
+      // Se não for áudio, encerramos aqui e acionamos a análise
+      if (type !== "AUDIO") {
+        await step.sendEvent("trigger-analysis", {
+          name: "conversation/analyze-requested",
+          data: { conversationId, organizationId }
+        });
+        return { success: true, messageId, type, transcribed: false };
+      }
+
+      // === PROCESSO DE TRANSCRIÇÃO DE ÁUDIO ===
+
+      // 4. Mark transcript as processing
+      await step.run("update-transcript-status", async () => {
+        await prisma.audioTranscript.upsert({
+          where: { messageId },
+          update: { status: "PROCESSING" },
+          create: {
+            messageId,
+            text: "",
+            status: "PROCESSING"
+          }
+        });
+      });
+
+      // 5. Save to temp file (OpenAI requires a File object)
       const tempFilePath = await step.run("save-temp-file", async () => {
         const tempDir = os.tmpdir();
-        const filePath = path.join(tempDir, `${randomUUID()}.ogg`); // WhatsApp uses OGG
-        fs.writeFileSync(filePath, Buffer.from(mediaBytes));
+        // Determine extension
+        let ext = ".ogg";
+        if (mediaResult.mimetype.includes("mp4")) ext = ".mp4";
+        if (mediaResult.mimetype.includes("mpeg")) ext = ".mp3";
+        if (mediaResult.mimetype.includes("wav")) ext = ".wav";
+        if (mediaResult.mimetype.includes("webm")) ext = ".webm";
+
+        const filePath = path.join(tempDir, `${randomUUID()}${ext}`); 
+        const buffer = Buffer.from(mediaResult.base64, 'base64');
+        fs.writeFileSync(filePath, buffer);
         return filePath;
       });
 
-       // 5. Send to OpenAI Whisper
-       const transcriptText = await step.run("whisper-transcription", async () => {
-         try {
-           const openai = getOpenAI();
-           if (!openai) {
-             throw new Error("OPENAI_API_KEY not configured");
-           }
-           const response = await openai.audio.transcriptions.create({
-             file: fs.createReadStream(tempFilePath),
-             model: "whisper-1",
-             language: "pt", // Força português, pode ser ajustado
-           });
+      // 6. Send to OpenAI Whisper
+      const transcriptText = await step.run("whisper-transcription", async () => {
+        try {
+          const openai = getOpenAI();
+          if (!openai) {
+            throw new Error("OPENAI_API_KEY not configured");
+          }
+          const response = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(tempFilePath),
+            model: "whisper-1",
+            language: "pt", // Força português, pode ser ajustado
+          });
 
-           return response.text;
-         } finally {
-           if (fs.existsSync(tempFilePath)) {
-             fs.unlinkSync(tempFilePath);
-           }
-         }
-       });
+          return response.text;
+        } finally {
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+          }
+        }
+      });
 
-      // 6. Save transcript to DB
+      // 7. Save transcript to DB
       await step.run("save-transcript", async () => {
         await prisma.audioTranscript.update({
           where: { messageId },
@@ -107,26 +140,42 @@ export const processAudioTranscript = inngest.createFunction(
         });
       });
 
-      // 7. Optional: Auto-analyze if it's part of a conversation that needs it
+      // 8. Auto-analyze the conversation now that we have the transcript
       await step.sendEvent("trigger-analysis", {
         name: "conversation/analyze-requested",
-        data: { conversationId: event.data.conversationId || "" } // Need to pass conversationId from webhook
+        data: { conversationId, organizationId }
       });
 
       return { success: true, messageId, transcript: transcriptText };
       
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error during transcription";
-      // Handle failure
-      await step.run("mark-failed", async () => {
-        await prisma.audioTranscript.update({
-          where: { messageId },
-          data: {
-            status: "FAILED",
-            errorMsg: message,
-          }
+      const message = error instanceof Error ? error.message : "Unknown error during media/transcription processing";
+      
+      // Handle failure for audio
+      if (type === "AUDIO") {
+        await step.run("mark-failed", async () => {
+          await prisma.audioTranscript.upsert({
+            where: { messageId },
+            update: {
+              status: "FAILED",
+              errorMsg: message,
+            },
+            create: {
+              messageId,
+              text: "",
+              status: "FAILED",
+              errorMsg: message,
+            }
+          });
         });
+      }
+      
+      // Still trigger analysis even if media/audio failed
+      await step.sendEvent("trigger-analysis-fallback", {
+        name: "conversation/analyze-requested",
+        data: { conversationId, organizationId }
       });
+
       throw error; // Let Inngest retry
     }
   }

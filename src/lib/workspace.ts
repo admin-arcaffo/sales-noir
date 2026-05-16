@@ -19,7 +19,7 @@ export async function getCurrentWorkspace() {
     throw new Error('Unauthorized');
   }
 
-  const existingUser = await prisma.user.findUnique({
+  let existingUser = await prisma.user.findUnique({
     where: { clerkId: session.userId },
     include: { organization: true },
   });
@@ -30,10 +30,28 @@ export async function getCurrentWorkspace() {
 
   const clerkUser = await currentUser();
   const email = clerkUser?.emailAddresses[0]?.emailAddress || `${session.userId}@local`;
+
+  // Check if user exists by email (happens if they delete and recreate their Clerk account)
+  existingUser = await prisma.user.findUnique({
+    where: { email },
+    include: { organization: true },
+  });
+
+  if (existingUser) {
+    // Update the existing user with the new clerkId
+    return prisma.user.update({
+      where: { id: existingUser.id },
+      data: { clerkId: session.userId },
+      include: { organization: true },
+    });
+  }
+
   const fullName = [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ').trim();
   const displayName = fullName || clerkUser?.username || email.split('@')[0];
   const baseSlug = slugify(displayName || email.split('@')[0] || 'workspace') || 'workspace';
-  const orgSlug = `${baseSlug}-${session.userId.slice(0, 6)}`;
+  // Use a more unique part of the userId, avoiding the common 'user_' prefix
+  const uniqueId = session.userId.replace('user_', '');
+  const orgSlug = `${baseSlug}-${uniqueId.slice(0, 8)}`;
 
   return prisma.user.create({
     data: {

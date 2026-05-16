@@ -19,10 +19,11 @@ const ENCODING = 'hex';
  * Must be exactly 32 bytes (256 bits) for AES-256
  */
 function getEncryptionKey(): Buffer {
-  const key = process.env.ENCRYPTION_KEY;
+  const key = process.env.ENCRYPTION_KEY?.trim();
   if (!key) {
+    console.error('CRITICAL: ENCRYPTION_KEY is missing from process.env');
     throw new Error(
-      'ENCRYPTION_KEY not set. Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+      'ENCRYPTION_KEY not set. Please check Vercel Environment Variables.'
     );
   }
   

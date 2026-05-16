@@ -19,7 +19,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
         return;
       }
 
-      const qr = await getWhatsAppQrCode(result.instanceName, result.instanceToken);
+      const qr = await getWhatsAppQrCode(result.instanceName);
 
       if ('error' in qr) {
         alert(qr.error);
@@ -40,7 +40,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
     if (!instanceName || !instanceToken) return;
     setIsLoading(true);
     try {
-      const qr = await getWhatsAppQrCode(instanceName, instanceToken);
+      const qr = await getWhatsAppQrCode(instanceName);
 
       if ('error' in qr) {
         alert(qr.error);
@@ -54,6 +54,32 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken }: { cur
       setIsLoading(false);
     }
   };
+
+  // Poll for status changes while showing QR
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
+    if (status === 'QRCODE' || currentStatus !== 'CONNECTED') {
+      interval = setInterval(async () => {
+        try {
+          const { getSettingsData } = await import("@/actions/crm");
+          const data = await getSettingsData();
+          if (data?.whatsappConnection?.status === 'CONNECTED') {
+            setStatus('CONNECTED');
+            clearInterval(interval);
+            // Optionally reload the page to refresh all data globally
+            window.location.reload();
+          }
+        } catch (e) {
+          // Ignore polling errors
+        }
+      }, 3000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [status, currentStatus]);
 
   if (status === 'CONNECTED') {
     return (

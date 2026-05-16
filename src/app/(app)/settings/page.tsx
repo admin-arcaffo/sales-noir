@@ -7,6 +7,7 @@ import {
   savePromptTemplateVersion,
   saveWhatsAppConnectionSettings,
   setActivePromptTemplate,
+  deletePromptTemplate,
   type PromptTemplateData,
   type SettingsData,
 } from "@/actions/crm";
@@ -19,15 +20,17 @@ export default function SettingsPage() {
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [isSavingWhatsApp, setIsSavingWhatsApp] = useState(false);
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [whatsAppForm, setWhatsAppForm] = useState({
     phoneNumberId: "",
     wabaId: "",
     accessToken: "",
   });
   const [form, setForm] = useState({
-    name: "Prompt Orquestrador",
-    slug: "orchestrator-main",
-    category: "orchestrator",
+    id: "",
+    name: "",
+    slug: "",
+    category: "auxiliary",
     content: "",
   });
 
@@ -41,8 +44,9 @@ export default function SettingsPage() {
           accessToken: "",
         });
         const activeOrchestrator = result.promptTemplates.find((template) => template.category === "orchestrator" && template.isActive);
-        if (activeOrchestrator) {
+        if (activeOrchestrator && !form.name) {
           setForm({
+            id: activeOrchestrator.id,
             name: activeOrchestrator.name,
             slug: activeOrchestrator.slug,
             category: activeOrchestrator.category,
@@ -101,6 +105,7 @@ export default function SettingsPage() {
     setIsSavingTemplate(true);
     try {
       await savePromptTemplateVersion(form);
+      setForm({ id: "", name: "", slug: "", category: "auxiliary", content: "" });
       loadSettings();
     } catch (error) {
       console.error("Failed to save prompt template:", error);
@@ -130,6 +135,19 @@ export default function SettingsPage() {
       console.error("Failed to activate prompt template:", error);
     } finally {
       setIsActivatingId(null);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!confirm("Tem certeza que deseja deletar este prompt?")) return;
+    setIsDeletingId(templateId);
+    try {
+      await deletePromptTemplate(templateId);
+      loadSettings();
+    } catch (error) {
+      console.error("Failed to delete prompt template:", error);
+    } finally {
+      setIsDeletingId(null);
     }
   };
 
@@ -236,9 +254,17 @@ export default function SettingsPage() {
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-6 items-start">
           <section className="bg-[#0c0c0e] border border-white/[0.06] rounded-xl p-5 space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-200">Adicionar/Editar Conhecimento IA</h2>
-              <p className="text-xs text-zinc-500 mt-1">Crie o <b>Prompt Orquestrador</b> (cérebro) ou adicione <b>Contextos Auxiliares</b> (políticas, objeções, tabelas).</p>
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-200">Adicionar/Editar Conhecimento IA</h2>
+                <p className="text-xs text-zinc-500 mt-1">Crie o <b>Prompt Orquestrador</b> (cérebro) ou adicione <b>Contextos Auxiliares</b> (políticas, objeções, tabelas).</p>
+              </div>
+              <button
+                onClick={() => setForm({ id: "", name: "", slug: "", category: "auxiliary", content: "" })}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+              >
+                + Novo Contexto
+              </button>
             </div>
 
             <div className="space-y-3">
@@ -251,9 +277,9 @@ export default function SettingsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <input
                   value={form.slug}
-                  onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
-                  placeholder="Slug (ex: precos)"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                  disabled
+                  placeholder="Slug (Gerado Automaticamente)"
+                  className="w-full bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2 text-sm text-zinc-500 cursor-not-allowed"
                 />
                 <select
                   value={form.category}
@@ -312,6 +338,7 @@ export default function SettingsPage() {
                     <div className="flex gap-2 shrink-0">
                       <button
                         onClick={() => setForm({
+                          id: template.id,
                           name: template.name,
                           slug: template.slug,
                           category: template.category,
@@ -323,10 +350,18 @@ export default function SettingsPage() {
                       </button>
                       <button
                         onClick={() => void handleActivateTemplate(template)}
-                        disabled={template.isActive || isActivatingId === template.id}
+                        disabled={template.isActive || isActivatingId === template.id || isDeletingId === template.id}
                         className="px-3 py-1.5 text-xs font-medium rounded-lg border border-white/10 bg-white text-black hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isActivatingId === template.id ? "Ativando..." : template.isActive ? "Ativo" : "Ativar"}
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteTemplate(template.id)}
+                        disabled={isDeletingId === template.id}
+                        className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-40"
+                        title="Deletar template"
+                      >
+                        {isDeletingId === template.id ? "..." : "🗑️"}
                       </button>
                     </div>
                   </div>

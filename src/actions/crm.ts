@@ -2,6 +2,7 @@
 
 import type { AnalysisResponse } from '@/lib/ai/prompts';
 import prisma from '@/lib/prisma';
+import { evolution } from '@/lib/evolution';
 import { sendWhatsAppMessage } from '@/lib/whatsapp';
 import { getCurrentWorkspace } from '@/lib/workspace';
 import { revalidatePath } from 'next/cache';
@@ -39,8 +40,28 @@ export type LeadData = {
   lastContact: string;
   origin: string;
   phone: string;
+  email: string | null;
   notes: string | null;
   conversationId: string | null;
+  monthlyRevenue: number | null;
+  mainChallenges: string | null;
+  productId: string | null;
+  productName: string | null;
+};
+
+export type ProductData = {
+  id: string;
+  name: string;
+  price: number | null;
+  description: string | null;
+  isActive: boolean;
+};
+
+export type PipelineStageData = {
+  id: string;
+  name: string;
+  color: string;
+  order: number;
 };
 
 export type TaskData = {
@@ -59,8 +80,11 @@ export type ConversationMessage = {
   direction: 'inbound' | 'outbound';
   type: string;
   text: string;
+  mediaUrl?: string | null;
   time: string;
   timestamp: string;
+  isEdited?: boolean;
+  reactions?: any;
 };
 
 export type ConversationAnalysisData = AnalysisResponse & {
@@ -83,8 +107,10 @@ export type ConversationData = {
   phone: string;
   origin: string;
   notes: string | null;
+  isLead: boolean;
   messageCount: number;
   canReply: boolean;
+  avatarUrl: string | null;
   messages: ConversationMessage[];
   latestAnalysis: ConversationAnalysisData | null;
 };
@@ -226,7 +252,9 @@ function formatConversationMessage(content: string | null, transcript: string | 
 
   if (type === 'AUDIO') return 'Mensagem de áudio';
   if (type === 'IMAGE') return 'Imagem enviada';
+  if (type === 'VIDEO') return 'Vídeo enviado';
   if (type === 'DOCUMENT') return 'Documento enviado';
+  if (type === 'STICKER') return 'Figurinha';
   return 'Mensagem recebida';
 }
 
@@ -304,8 +332,9 @@ export async function getLeads(): Promise<LeadData[]> {
   const orgId = workspace.organizationId;
 
   const leads = await prisma.contact.findMany({
-    where: { organizationId: orgId },
+    where: { organizationId: orgId, isLead: true },
     include: {
+      product: true,
       conversations: {
         orderBy: { updatedAt: 'desc' },
         take: 1,
@@ -328,8 +357,13 @@ export async function getLeads(): Promise<LeadData[]> {
       lastContact: formatTimeLabel(latestConversation?.lastMessageAt || lead.updatedAt),
       origin: lead.origin || 'Não informado',
       phone: lead.phone,
+      email: lead.email,
       notes: lead.notes || null,
       conversationId: latestConversation?.id || null,
+      monthlyRevenue: lead.monthlyRevenue,
+      mainChallenges: lead.mainChallenges,
+      productId: lead.productId,
+      productName: lead.product?.name || null,
     };
   });
 }
@@ -493,7 +527,8 @@ export async function getConversations(): Promise<ConversationData[]> {
         },
       },
       messages: {
-        orderBy: { timestamp: 'asc' },
+        orderBy: { timestamp: 'desc' },
+        take: 50,
         include: {
           transcript: true,
           media: true,
@@ -504,7 +539,7 @@ export async function getConversations(): Promise<ConversationData[]> {
   });
 
   return conversations.map((conversation) => {
-    const lastMessage = conversation.messages[conversation.messages.length - 1];
+    const lastMessage = conversation.messages[0]; // Messages are fetched DESC, so [0] is the newest
     const preview = lastMessage
       ? formatConversationMessage(
           lastMessage.content,
@@ -530,9 +565,14 @@ export async function getConversations(): Promise<ConversationData[]> {
       phone: conversation.contact.phone,
       origin: conversation.contact.origin || 'Não informado',
       notes: conversation.contact.notes || null,
+      isLead: conversation.contact.isLead,
       messageCount: conversation.messages.length,
-      canReply: Boolean(whatsappConnection?.accessToken && whatsappConnection.phoneNumberId),
-      messages: conversation.messages.map((message) => ({
+      canReply: Boolean(
+        (whatsappConnection?.provider === 'META' && whatsappConnection?.accessToken && whatsappConnection.phoneNumberId) ||
+        (whatsappConnection?.provider === 'EVOLUTION' && whatsappConnection?.instanceName && whatsappConnection?.status === 'CONNECTED')
+      ),
+      avatarUrl: conversation.contact.avatarUrl,
+      messages: conversation.messages.reverse().map((message) => ({
         id: message.id,
         direction: message.direction === 'OUTBOUND' ? 'outbound' : 'inbound',
         type: message.type,
@@ -541,11 +581,14 @@ export async function getConversations(): Promise<ConversationData[]> {
           message.transcript?.text || null,
           message.type,
         ),
+        mediaUrl: message.mediaUrl,
         time: new Intl.DateTimeFormat('pt-BR', {
           hour: '2-digit',
           minute: '2-digit',
         }).format(message.timestamp),
         timestamp: message.timestamp.toISOString(),
+        isEdited: message.isEdited,
+        reactions: message.reactions,
       })),
       latestAnalysis: conversation.analyses[0]
         ? {
@@ -600,7 +643,7 @@ export async function getSettingsData(): Promise<SettingsData> {
         status: whatsappConnection?.status || 'DISCONNECTED',
       },
       openAIStatus: process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dummy_key' ? 'Configurado' : 'Pendente',
-      inngestStatus: process.env.INNGEST_EVENT_KEY ? 'Ativo' : 'Pendente',
+      inngestStatus: process.env.NODE_ENV === 'development' ? 'Ativo (Dev)' : process.env.INNGEST_EVENT_KEY || process.env.INNGEST_SIGNING_KEY ? 'Ativo' : 'Pendente',
       promptTemplatesCount: promptTemplates.length,
       promptTemplates: promptTemplates.map((template) => ({
         id: template.id,
@@ -670,21 +713,45 @@ export async function sendConversationMessage(conversationId: string, content: s
     },
   });
 
-  const accessToken = connection?.accessToken || envWhatsAppToken;
+  const isEvolution = connection?.provider === 'EVOLUTION';
+  const accessToken = isEvolution ? connection?.instanceToken : (connection?.accessToken || envWhatsAppToken);
 
-  if (!accessToken || !connection?.phoneNumberId) {
+  if (!accessToken || (!isEvolution && !connection?.phoneNumberId)) {
     throw new Error('WhatsApp connection is not configured for outbound messages');
   }
 
   try {
-    const response = await sendWhatsAppMessage(accessToken, {
-      phoneNumberId: connection.phoneNumberId,
-      to: conversation.contact.phone,
-      type: 'text',
-      text: { body: trimmedContent },
-    });
+    let response: any;
+    let waMessageId: string | null = null;
 
-    const waMessageId = response?.messages?.[0]?.id || null;
+    if (isEvolution && connection?.instanceName) {
+      // Evolution API Logic
+      const { decryptToken } = await import('@/lib/encryption');
+      const decryptedToken = decryptToken(accessToken);
+      
+      const result = await evolution.sendText(
+        connection.instanceName,
+        decryptedToken,
+        conversation.contact.phone,
+        trimmedContent
+      );
+      
+      response = result;
+      waMessageId = result.key?.id || result.message?.key?.id || null;
+    } else if (connection?.phoneNumberId) {
+      // Meta API Logic
+      const result = await sendWhatsAppMessage(accessToken, {
+        phoneNumberId: connection.phoneNumberId,
+        to: conversation.contact.phone,
+        type: 'text',
+        text: { body: trimmedContent },
+      });
+      
+      response = result;
+      waMessageId = result?.messages?.[0]?.id || null;
+    } else {
+      throw new Error('Unsupported WhatsApp provider or missing configuration');
+    }
 
     const message = await prisma.message.create({
       data: {
@@ -737,6 +804,116 @@ export async function sendConversationMessage(conversationId: string, content: s
       },
     });
 
+    throw error;
+  }
+}
+
+export async function sendMediaMessage(input: {
+  conversationId: string;
+  base64: string;
+  mediatype: string;
+  mimetype: string;
+  fileName?: string;
+}) {
+  const workspace = await getCurrentWorkspace();
+  const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || '';
+
+  const conversation = await prisma.conversation.findFirst({
+    where: {
+      id: input.conversationId,
+      contact: { organizationId: workspace.organizationId },
+    },
+    include: { contact: true },
+  });
+
+  if (!conversation) throw new Error('Conversation not found');
+
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, status: 'CONNECTED' },
+  });
+
+  const isEvolution = connection?.provider === 'EVOLUTION';
+  const accessToken = isEvolution ? connection?.instanceToken : (connection?.accessToken || envWhatsAppToken);
+
+  if (!accessToken || !isEvolution || !connection?.instanceName) {
+    throw new Error('Media sending is currently only supported via Evolution API');
+  }
+
+  try {
+    const { decryptToken } = await import('@/lib/encryption');
+    const decryptedToken = decryptToken(accessToken);
+    
+    // Extract raw base64 if it has the data URI prefix
+    const rawBase64 = input.base64.includes('base64,') 
+      ? input.base64.split('base64,')[1] 
+      : input.base64;
+
+    const result = await evolution.sendMedia(
+      connection.instanceName,
+      decryptedToken,
+      conversation.contact.phone,
+      rawBase64,
+      input.mediatype,
+      input.mimetype,
+      "",
+      input.fileName
+    );
+    
+    const waMessageId = result.key?.id || result.message?.key?.id || null;
+
+    // Prisma map type: image -> IMAGE, document -> DOCUMENT, audio -> AUDIO
+    const dbType = input.mediatype.toUpperCase();
+    const mediaUrl = `data:${input.mimetype};base64,${rawBase64}`;
+
+    const message = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        direction: 'OUTBOUND',
+        type: dbType,
+        content: `Mídia enviada (${input.mediatype})`,
+        mediaUrl: mediaUrl,
+        waMessageId,
+      },
+    });
+
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: message.timestamp },
+    });
+
+    await prisma.integrationLog.create({
+      data: {
+        connectionId: connection.id,
+        event: 'OUTBOUND_MEDIA_SEND',
+        direction: 'OUTBOUND',
+        payload: result,
+        statusCode: 200,
+      },
+    });
+
+    revalidatePath('/conversations');
+    revalidatePath('/dashboard');
+
+    return {
+      id: message.id,
+      direction: 'outbound' as const,
+      type: dbType,
+      text: `Mídia enviada (${input.mediatype})`,
+      mediaUrl: mediaUrl,
+      time: new Intl.DateTimeFormat('pt-BR', {
+        hour: '2-digit', minute: '2-digit',
+      }).format(message.timestamp),
+      timestamp: message.timestamp.toISOString(),
+    };
+  } catch (error) {
+    await prisma.integrationLog.create({
+      data: {
+        connectionId: connection.id,
+        event: 'OUTBOUND_MEDIA_ERROR',
+        direction: 'OUTBOUND',
+        errorMsg: error instanceof Error ? error.message : 'Unknown error',
+      },
+    });
     throw error;
   }
 }
@@ -856,6 +1033,44 @@ export async function savePromptTemplateVersion(input: {
   } satisfies PromptTemplateData;
 }
 
+export async function deletePromptTemplate(templateId: string) {
+  const workspace = await getCurrentWorkspace();
+  
+  const template = await prisma.promptTemplate.findFirst({
+    where: {
+      id: templateId,
+      organizationId: workspace.organizationId,
+    },
+  });
+
+  if (!template) {
+    throw new Error('Template not found');
+  }
+
+  await prisma.promptTemplate.delete({
+    where: { id: template.id },
+  });
+
+  if (template.isActive) {
+    const latest = await prisma.promptTemplate.findFirst({
+      where: {
+        organizationId: workspace.organizationId,
+        slug: template.slug,
+      },
+      orderBy: { version: 'desc' },
+    });
+
+    if (latest) {
+      await prisma.promptTemplate.update({
+        where: { id: latest.id },
+        data: { isActive: true },
+      });
+    }
+  }
+
+  revalidatePath('/settings');
+}
+
 export async function setActivePromptTemplate(templateId: string) {
   const workspace = await getCurrentWorkspace();
 
@@ -968,4 +1183,302 @@ export async function saveConversationAnalysis(input: {
   revalidatePath('/conversations');
 
   return created;
+}
+
+export async function promoteToLead(contactId: string) {
+  const workspace = await getCurrentWorkspace();
+
+  const contact = await prisma.contact.update({
+    where: { 
+      id: contactId,
+      organizationId: workspace.organizationId 
+    },
+    data: { isLead: true }
+  });
+
+  revalidatePath("/conversations");
+  revalidatePath("/leads");
+  
+  return contact;
+}
+
+export async function updateContactNotes(contactId: string, notes: string) {
+  const workspace = await getCurrentWorkspace();
+  const contact = await prisma.contact.update({
+    where: { 
+      id: contactId,
+      organizationId: workspace.organizationId 
+    },
+    data: { notes }
+  });
+  revalidatePath("/conversations");
+  return contact;
+}
+
+export async function updateAnalysis(analysisId: string, data: Partial<AnalysisResponse>) {
+  const workspace = await getCurrentWorkspace();
+  
+  // Verify ownership via conversation join
+  const analysis = await prisma.aIAnalysis.findFirst({
+    where: {
+      id: analysisId,
+      conversation: { contact: { organizationId: workspace.organizationId } }
+    }
+  });
+
+  if (!analysis) throw new Error("Analysis not found or access denied");
+
+  const updated = await prisma.aIAnalysis.update({
+    where: { id: analysisId },
+    data: {
+      summary: data.summary,
+      nextConcreteStep: data.nextConcreteStep,
+      recommendedPosture: data.recommendedPosture,
+      whatToAvoid: data.whatToAvoid,
+    }
+  });
+
+  revalidatePath("/conversations");
+  return updated;
+}
+
+// ============================================
+// MESSAGE MANAGEMENT ACTIONS
+// ============================================
+
+export async function deleteOutboundMessage(messageId: string, conversationId: string) {
+  const workspace = await getCurrentWorkspace();
+  
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, direction: 'OUTBOUND', conversation: { contact: { organizationId: workspace.organizationId } } },
+    include: { conversation: { include: { contact: true } } },
+  });
+  if (!message) throw new Error("Message not found");
+
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+  
+  if (connection?.instanceName && connection.instanceToken && message.waMessageId) {
+    try {
+      const { decryptToken } = await import('@/lib/encryption');
+      const token = decryptToken(connection.instanceToken);
+      await evolution.deleteMessage(connection.instanceName, token, message.conversation.contact.phone, message.waMessageId);
+    } catch (e) {
+      console.warn('Failed to delete on WhatsApp:', e);
+    }
+  }
+
+  await prisma.message.delete({ where: { id: messageId } });
+  revalidatePath('/conversations');
+  return { success: true };
+}
+
+export async function editOutboundMessage(messageId: string, newText: string) {
+  const workspace = await getCurrentWorkspace();
+  
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, direction: 'OUTBOUND', conversation: { contact: { organizationId: workspace.organizationId } } },
+    include: { conversation: { include: { contact: true } } },
+  });
+  if (!message) throw new Error("Message not found");
+
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+
+  if (connection?.instanceName && connection.instanceToken && message.waMessageId) {
+    try {
+      const { decryptToken } = await import('@/lib/encryption');
+      const token = decryptToken(connection.instanceToken);
+      await evolution.editMessage(connection.instanceName, token, message.conversation.contact.phone, message.waMessageId, newText);
+    } catch (e) {
+      console.warn('Failed to edit on WhatsApp:', e);
+    }
+  }
+
+  const updated = await prisma.message.update({ where: { id: messageId }, data: { content: newText } });
+  revalidatePath('/conversations');
+  return updated;
+}
+
+export async function sendMessageReaction(conversationId: string, messageId: string, emoji: string) {
+  const workspace = await getCurrentWorkspace();
+
+  const message = await prisma.message.findFirst({
+    where: { id: messageId, conversation: { contact: { organizationId: workspace.organizationId } } },
+    include: { conversation: { include: { contact: true } } },
+  });
+  if (!message) throw new Error("Message not found");
+
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+
+  if (connection?.instanceName && connection.instanceToken && message.waMessageId) {
+    try {
+      const { decryptToken } = await import('@/lib/encryption');
+      const token = decryptToken(connection.instanceToken);
+      await evolution.sendReaction(
+        connection.instanceName,
+        token,
+        message.conversation.contact.phone,
+        message.waMessageId,
+        emoji,
+        message.direction === 'OUTBOUND'
+      );
+    } catch (e) {
+      console.warn('Failed to react on WhatsApp:', e);
+    }
+  }
+
+  return { success: true };
+}
+
+// ============================================
+// WHATSAPP PROFILE MANAGEMENT
+// ============================================
+
+export async function getWhatsAppProfile() {
+  const workspace = await getCurrentWorkspace();
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+
+  if (!connection?.instanceName || !connection.instanceToken) {
+    return null;
+  }
+
+  try {
+    const { decryptToken } = await import('@/lib/encryption');
+    const token = decryptToken(connection.instanceToken);
+    const profile = await evolution.fetchProfile(connection.instanceName, token);
+    return profile;
+  } catch (e) {
+    console.warn('Failed to fetch WhatsApp profile:', e);
+    return null;
+  }
+}
+
+export async function updateWhatsAppProfile(data: { name?: string; status?: string; pictureBase64?: string }) {
+  const workspace = await getCurrentWorkspace();
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+
+  if (!connection?.instanceName || !connection.instanceToken) {
+    throw new Error("WhatsApp not connected");
+  }
+
+  const { decryptToken } = await import('@/lib/encryption');
+  const token = decryptToken(connection.instanceToken);
+  const results: Record<string, unknown> = {};
+
+  if (data.name) {
+    results.name = await evolution.updateProfileName(connection.instanceName, token, data.name);
+  }
+  if (data.status) {
+    results.status = await evolution.updateProfileStatus(connection.instanceName, token, data.status);
+  }
+  if (data.pictureBase64) {
+    results.picture = await evolution.updateProfilePicture(connection.instanceName, token, data.pictureBase64);
+  }
+
+  return results;
+}
+
+export async function getContactProfile(contactPhone: string) {
+  const workspace = await getCurrentWorkspace();
+  const connection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, provider: 'EVOLUTION', status: 'CONNECTED' },
+  });
+
+  if (!connection?.instanceName || !connection.instanceToken) return null;
+
+  try {
+    const { decryptToken } = await import('@/lib/encryption');
+    const token = decryptToken(connection.instanceToken);
+    const [profile, avatar] = await Promise.all([
+      evolution.fetchProfile(connection.instanceName, token, contactPhone),
+      evolution.fetchProfilePictureUrl(connection.instanceName, token, contactPhone),
+    ]);
+    return { ...profile, avatarUrl: avatar };
+  } catch (e) {
+    console.warn('Failed to fetch contact profile:', e);
+    return null;
+  }
+}
+
+export async function getPipelineStages(): Promise<PipelineStageData[]> {
+  const workspace = await getCurrentWorkspace();
+  const stages = await prisma.pipelineStage.findMany({
+    where: { organizationId: workspace.organizationId },
+    orderBy: { order: 'asc' },
+  });
+
+  return stages;
+}
+
+export async function getProducts(): Promise<ProductData[]> {
+  const workspace = await getCurrentWorkspace();
+  const products = await prisma.product.findMany({
+    where: { organizationId: workspace.organizationId, isActive: true },
+    orderBy: { name: 'asc' },
+  });
+
+  return products;
+}
+
+export async function updateContactProfile(contactId: string, data: {
+  name?: string;
+  email?: string;
+  company?: string;
+  monthlyRevenue?: number;
+  mainChallenges?: string;
+  productId?: string;
+  notes?: string;
+}) {
+  const workspace = await getCurrentWorkspace();
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, organizationId: workspace.organizationId },
+  });
+
+  if (!contact) {
+    throw new Error('Contact not found');
+  }
+
+  const updated = await prisma.contact.update({
+    where: { id: contact.id },
+    data,
+  });
+
+  revalidatePath('/leads');
+  revalidatePath('/conversations');
+  return updated;
+}
+
+export async function suggestChallengesFromAI(contactId: string) {
+  const workspace = await getCurrentWorkspace();
+  
+  // Get latest analysis for this contact
+  const analysis = await prisma.aIAnalysis.findFirst({
+    where: { 
+      conversation: { 
+        contactId, 
+        contact: { organizationId: workspace.organizationId }
+      } 
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  if (!analysis) {
+    return null;
+  }
+
+  // Combine pain points and implicit objections to form challenges
+  const painPoints = Array.isArray(analysis.painPoints) ? analysis.painPoints : [];
+  const implicitObjections = Array.isArray(analysis.implicitObjections) ? analysis.implicitObjections : [];
+  
+  const challenges = [...painPoints, ...implicitObjections].join('\n');
+  return challenges || "Nenhum desafio evidente encontrado na análise.";
 }
