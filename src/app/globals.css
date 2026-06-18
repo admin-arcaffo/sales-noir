@@ -1,0 +1,438 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Noir / Noyer / Cinematic Palette */
+  --background: #040406; /* Ultra Dark Base */
+  --foreground: #fafafa; /* Zinc 50 */
+  
+  --card: #09090b; /* Card background */
+  --card-foreground: #fafafa;
+  
+  --popover: #09090b;
+  --popover-foreground: #fafafa;
+  
+  --primary: #ffffff;
+  --primary-foreground: #09090b;
+  
+  --secondary: #18181b; /* Zinc 900 */
+  --secondary-foreground: #fafafa;
+  
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa; /* Zinc 400 */
+  
+  --accent: #18181b;
+  --accent-foreground: #fafafa;
+  
+  --destructive: #450a0a; /* Deep Red */
+  --destructive-foreground: #fef2f2;
+  
+  --border: #27272a; /* Zinc 800 */
+  --input: #18181b;
+  --ring: #d4d4d8; /* Zinc 300 for focus */
+  
+  --radius: 0.5rem;
+
+  /* Custom Status Colors - Cinematic */
+  --status-hot: #f59e0b;     /* Amber 500 */
+  --status-warm: #fbbf24;    /* Amber 400 */
+  --status-cold: #3b82f6;    /* Blue 500 */
+  --status-success: #10b981; /* Emerald 500 */
+  --status-danger: #ef4444;  /* Red 500 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: 'Inter', sans-serif;
+  --font-display: 'Inter Tight', sans-serif;
+  
+  --color-zinc-850: #1f1f22;
+
+  /* Noir Specific Shadows & Gradients */
+  --shadow-noir: 0 10px 40px -10px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-white selection:text-black;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight font-semibold;
+  }
+}
+
+@layer components {
+  .glass-noir {
+    @apply bg-[#070709]/80 backdrop-blur-md border border-zinc-850/80;
+  }
+  
+  .glow-border {
+    @apply relative overflow-hidden after:absolute after:inset-0 after:rounded-[inherit] after:p-[1px] after:bg-gradient-to-br after:from-white/10 after:to-transparent after:content-[''] after:pointer-events-none;
+  }
+
+  .btn-noir {
+    @apply px-5 py-2.5 bg-zinc-100 hover:bg-white text-black rounded text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-noir-outline {
+    @apply px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 rounded text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .label-mono {
+    @apply font-mono text-[9px] text-zinc-500 uppercase tracking-widest;
+  }
+
+  .card-noir {
+    @apply bg-[#09090b] border border-zinc-900 rounded p-6;
+  }
+}
+
+/* Custom Scrollbar for Noir Theme */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Hide standard CRM layout sidebar menu when there's an active chat selected on mobile */
+.has-active-chat aside {
+  display: none !important;
+}
+@media (min-width: 768px) {
+  .has-active-chat aside {
+    display: flex !important;
+  }
+}
+
+/* ==========================================
+   WHITE MODE (LIGHT THEME) SYSTEM
+   ========================================== */
+.light {
+  color-scheme: light;
+  --background: #f4f4f7; /* Very light cool grey */
+  --foreground: #09090b; /* Zinc 950 */
+  
+  --card: #ffffff; /* Crisp white */
+  --card-foreground: #09090b;
+  
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  
+  --primary: #09090b;
+  --primary-foreground: #ffffff;
+  
+  --secondary: #e4e4e7; /* Zinc 200 */
+  --secondary-foreground: #09090b;
+  
+  --muted: #f4f4f5; /* Zinc 100 */
+  --muted-foreground: #71717a; /* Zinc 500 */
+  
+  --accent: #f4f4f5;
+  --accent-foreground: #09090b;
+  
+  --border: #e4e4e7; /* Zinc 200 */
+  --input: #ffffff;
+  --ring: #71717a;
+}
+
+/* Cascading Utility Overrides for Light Theme */
+.light body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* Background Overrides */
+.light {
+  & .bg-\[\#040406\] {
+    background-color: var(--background) !important;
+  }
+  
+  & .bg-\[\#0a0a0c\] {
+    background-color: var(--card) !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+
+  & .bg-\[\#09090b\] {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-\[\#070709\] {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-\[\#0c0c0e\] {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-\[\#0c0c0e\]\/95 {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+  }
+
+  & .glass-noir {
+    background-color: rgba(255, 255, 255, 0.8) !important;
+    border-color: var(--border) !important;
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.08) !important;
+  }
+
+  & .bg-zinc-950 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-900 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-900\/60 {
+    background-color: var(--card) !important;
+    border-color: var(--border) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  }
+
+  & .bg-zinc-900\/50 {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-zinc-900\/40 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-900\/30 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-950\/20 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-950\/40 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-zinc-800 {
+    background-color: var(--muted) !important;
+  }
+
+  & .bg-white\/5 {
+    background-color: var(--muted) !important;
+    border-color: var(--border) !important;
+  }
+
+  & .bg-zinc-950\/80 {
+    background-color: var(--muted) !important;
+    border-bottom-color: var(--border) !important;
+  }
+
+  & .bg-zinc-950\/90 {
+    background-color: var(--card) !important;
+    border-top-color: var(--border) !important;
+  }
+
+  & .bg-\[\#09090b\]\/40 {
+    background-color: var(--background) !important;
+  }
+
+  & .bg-white\/10 {
+    background-color: var(--secondary) !important;
+  }
+}
+
+/* Hover Overrides */
+.light {
+  & .hover\:bg-zinc-900\/30:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-zinc-900\/40:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-zinc-850:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-zinc-900:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-zinc-800:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-zinc-950:hover {
+    background-color: var(--muted) !important;
+  }
+
+  & .hover\:bg-white\/10:hover {
+    background-color: var(--secondary) !important;
+  }
+
+  & .hover\:text-white:hover {
+    color: var(--foreground) !important;
+  }
+
+  & .hover\:text-zinc-100:hover {
+    color: var(--foreground) !important;
+  }
+
+  & .hover\:text-zinc-300:hover {
+    color: var(--foreground) !important;
+  }
+
+  & .hover\:border-zinc-800:hover {
+    border-color: var(--border) !important;
+  }
+
+  & .hover\:border-zinc-700\/80:hover {
+    border-color: var(--ring) !important;
+  }
+}
+
+/* Border Overrides */
+.light {
+  & .border-zinc-950,
+  & .border-zinc-900,
+  & .border-zinc-900\/40,
+  & .border-zinc-850,
+  & .border-zinc-850\/80,
+  & .border-zinc-800,
+  & .border-zinc-700,
+  & .border-white\/10,
+  & .border-white\/\[0\.06\],
+  & .border-white\/5,
+  & .border-zinc-900 {
+    border-color: var(--border) !important;
+  }
+}
+
+/* Text Color Overrides */
+.light {
+  & .text-white,
+  & .text-zinc-100,
+  & .text-zinc-200,
+  & .text-zinc-300,
+  & .text-zinc-250,
+  & .text-zinc-255,
+  & .text-zinc-350,
+  & .group-hover\:text-white {
+    color: var(--foreground) !important;
+  }
+
+  & .text-zinc-400,
+  & .text-zinc-500,
+  & .text-zinc-450,
+  & .text-zinc-550,
+  & .text-zinc-600,
+  & .text-zinc-650,
+  & .text-zinc-700 {
+    color: var(--muted-foreground) !important;
+  }
+
+  & .text-sky-400 {
+    color: #0284c7 !important; /* Higher contrast blue in light mode */
+  }
+
+  & .bg-sky-500\/10 {
+    background-color: rgba(14, 165, 233, 0.1) !important;
+  }
+
+  & .border-sky-500\/20 {
+    border-color: rgba(14, 165, 233, 0.2) !important;
+  }
+}
+
+/* Forms & Inputs */
+.light input,
+.light textarea,
+.light select {
+  background-color: var(--card) !important;
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: var(--muted-foreground) !important;
+  opacity: 0.6;
+}
+
+/* Chat Message Bubbles Exchange */
+.light {
+  & .bg-zinc-100.text-black,
+  & .bg-white.text-black {
+    background-color: var(--primary) !important;
+    color: var(--primary-foreground) !important;
+    border: none !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  }
+
+  & .bg-zinc-900.text-zinc-300 {
+    background-color: var(--muted) !important;
+    color: var(--foreground) !important;
+    border-color: var(--border) !important;
+  }
+}
+
+/* Sidebar Specific */
+.light aside {
+  background-color: var(--card) !important;
+  border-right: 1px solid var(--border) !important;
+}
+
+.light aside a.bg-zinc-900 {
+  background-color: var(--secondary) !important;
+  color: var(--foreground) !important;
+}
+
+.light aside a.text-zinc-500:hover {
+  background-color: var(--muted) !important;
+  color: var(--foreground) !important;
+}
+
+/* Scrollbar Custom in Light Theme */
+.light ::-webkit-scrollbar-thumb {
+  background-color: var(--secondary) !important;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border) !important;
+}
+
+
