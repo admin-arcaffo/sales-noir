@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, RotateCw, Upload, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, RotateCw, Upload } from "lucide-react";
 import {
   importContactsFromFile,
   previewContactsImport,
@@ -11,6 +11,7 @@ import {
   type ContactImportResult,
 } from "@/actions/crm";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
 import { invalidateChatCache } from "@/lib/chat-cache";
 
 type WizardStep = "upload" | "map" | "confirm" | "result";
@@ -170,20 +171,47 @@ export function ImportContactsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-white/5 bg-indigo-500/10 p-6">
-          <div>
-            <h3 className="flex items-center gap-2 text-lg font-bold text-indigo-300">
-              <FileSpreadsheet className="h-5 w-5" /> Importar Contatos
-            </h3>
-            <p className="mt-1 text-xs text-zinc-500">Preview, mapeamento, conciliacao e confirmacao antes de gravar.</p>
-          </div>
-          <button onClick={handleClose} disabled={isSubmitting || isPreviewing} className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50">
-            <X className="h-5 w-5" />
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Importar Contatos"
+      description="Preview, mapeamento, conciliacao e confirmacao antes de gravar."
+      icon={<FileSpreadsheet className="h-5 w-5 text-indigo-300" />}
+      maxWidth="max-w-6xl"
+      closeDisabled={isSubmitting || isPreviewing}
+      headerClassName="bg-indigo-500/10 p-6"
+      contentClassName="p-0"
+      footer={(
+        <>
+          <button onClick={handleClose} disabled={isSubmitting || isPreviewing} className="btn-noir-secondary px-5 py-2.5">
+            {step === "result" ? "Fechar" : "Cancelar"}
           </button>
-        </div>
 
+          {step === "upload" && (
+            <button onClick={() => fileInputRef.current?.click()} disabled={isPreviewing} className="flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:opacity-60">
+              {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              Selecionar arquivo
+            </button>
+          )}
+
+          {step === "map" && preview && (
+            <button onClick={() => setStep("confirm")} disabled={isPreviewStale || isPreviewing || validRows.length === 0} className="rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:opacity-50">
+              Continuar
+            </button>
+          )}
+
+          {step === "confirm" && preview && (
+            <>
+              <button onClick={() => setStep("map")} disabled={isSubmitting} className="btn-noir-secondary px-5 py-2.5">Voltar</button>
+              <button onClick={() => void handleSubmit()} disabled={selectedCount === 0 || isSubmitting} className="flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:opacity-60">
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Importar {selectedCount} linha(s)
+              </button>
+            </>
+          )}
+        </>
+      )}
+    >
         <div className="border-b border-white/5 px-6 py-3">
           <div className="flex flex-wrap gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
             {["Upload", "Mapeamento", "Confirmacao", "Resultado"].map((label, index) => {
@@ -197,7 +225,7 @@ export function ImportContactsModal({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="p-6">
           {step === "upload" && (
             <div className="mx-auto max-w-xl space-y-5">
               <div
@@ -433,35 +461,6 @@ export function ImportContactsModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-white/5 p-6">
-          <button onClick={handleClose} disabled={isSubmitting || isPreviewing} className="rounded-lg bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-60">
-            {step === "result" ? "Fechar" : "Cancelar"}
-          </button>
-
-          {step === "upload" && (
-            <button onClick={() => fileInputRef.current?.click()} disabled={isPreviewing} className="flex items-center gap-2 rounded-lg bg-indigo-500 px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-600 disabled:opacity-60">
-              {isPreviewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Selecionar arquivo
-            </button>
-          )}
-
-          {step === "map" && preview && (
-            <button onClick={() => setStep("confirm")} disabled={isPreviewStale || isPreviewing || validRows.length === 0} className="rounded-lg bg-indigo-500 px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50">
-              Continuar
-            </button>
-          )}
-
-          {step === "confirm" && preview && (
-            <>
-              <button onClick={() => setStep("map")} disabled={isSubmitting} className="rounded-lg border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-zinc-300 hover:bg-white/10 disabled:opacity-60">Voltar</button>
-              <button onClick={() => void handleSubmit()} disabled={selectedCount === 0 || isSubmitting} className="flex items-center gap-2 rounded-lg bg-indigo-500 px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-indigo-600 disabled:opacity-60">
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                Importar {selectedCount} linha(s)
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

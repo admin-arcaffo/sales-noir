@@ -137,7 +137,7 @@ export function FloatingChatPopup() {
     <div
       ref={popupRef}
       style={popupStyle}
-      className={`fixed z-50 w-[360px] md:w-[380px] bg-[#0c0c0e]/95 border border-zinc-800 rounded-lg shadow-2xl flex flex-col overflow-hidden transition-colors glass-noir
+      className={`surface-noir fixed z-50 flex w-[360px] flex-col overflow-hidden shadow-2xl transition-colors md:w-[380px]
         ${!isFloating ? "bottom-4 right-4" : ""}
         ${isMinimized ? "h-[52px]" : "h-[450px] md:h-[480px]"}`}
     >
@@ -146,7 +146,7 @@ export function FloatingChatPopup() {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        className={`px-4 py-3 bg-zinc-950/80 border-b border-zinc-850 flex items-center justify-between select-none
+        className={`flex select-none items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 py-3
           ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
       >
         <div className="flex items-center gap-2.5 min-w-0">
@@ -177,7 +177,7 @@ export function FloatingChatPopup() {
             <button
               onClick={handleDockBack}
               title="Fixar no canto"
-              className="p-1 rounded text-zinc-500 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer"
+              className="rounded p-1 text-zinc-500 transition-all hover:bg-white/5 hover:text-white cursor-pointer"
             >
               <Pin size={13} />
             </button>
@@ -185,14 +185,14 @@ export function FloatingChatPopup() {
           <button
             onClick={() => setIsMinimized(!isMinimized)}
             title={isMinimized ? "Expandir" : "Minimizar"}
-            className="p-1 rounded text-zinc-500 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer"
+            className="rounded p-1 text-zinc-500 transition-all hover:bg-white/5 hover:text-white cursor-pointer"
           >
             {isMinimized ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
           </button>
           <button
             onClick={() => setIsPopupOpen(false)}
             title="Fechar chat"
-            className="p-1 rounded text-zinc-500 hover:bg-zinc-900 hover:text-red-400 transition-all cursor-pointer"
+            className="rounded p-1 text-zinc-500 transition-all hover:bg-red-500/10 hover:text-red-400 cursor-pointer"
           >
             <X size={13} />
           </button>
@@ -203,7 +203,7 @@ export function FloatingChatPopup() {
       {!isMinimized && (
         <>
           {/* Scrollable Message List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#09090b]/40">
+          <div className="flex-1 space-y-3.5 overflow-y-auto bg-[#09090b]/40 p-4">
             {activeConvo.messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-4">
                 <MessageCircle className="w-8 h-8 text-zinc-700 mb-2 animate-bounce" />
@@ -242,19 +242,19 @@ export function FloatingChatPopup() {
           </div>
 
           {/* Footer Input Form */}
-          <form onSubmit={handleSend} className="p-3 bg-zinc-950/90 border-t border-zinc-850 flex items-center gap-2">
+          <form onSubmit={handleSend} className="flex items-center gap-2 border-t border-white/5 bg-white/[0.02] p-3">
             <input
               type="text"
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Digite sua mensagem..."
-              className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-700 placeholder:text-zinc-650"
+              className="input-noir flex-1 px-3 py-2 text-xs"
             />
             <button
               type="submit"
               disabled={!inputMessage.trim() || isSending}
-              className="w-8 h-8 rounded bg-white text-black hover:bg-zinc-200 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0"
+              className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded bg-white text-black transition-all hover:bg-zinc-200 disabled:opacity-40"
             >
               <Send size={12} />
             </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
 import { Check, XCircle, Info } from "lucide-react";
 
 export type ToastType = "success" | "error" | "info";
@@ -37,7 +37,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className="pointer-events-auto flex flex-col items-center justify-center p-6 min-w-[200px] max-w-[300px] text-center bg-[#09090b]/80 backdrop-blur-md border border-white/10 rounded-3xl shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-300"
+            className="surface-noir pointer-events-auto flex min-w-[200px] max-w-[300px] flex-col items-center justify-center rounded-2xl p-6 text-center shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-300"
           >
             <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
               toast.type === "success" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :

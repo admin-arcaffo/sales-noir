@@ -271,7 +271,7 @@ export default function SettingsPage() {
       {/* Sidebar / Tabs Navigation */}
       <aside className="w-full md:w-64 lg:w-72 border-b md:border-b-0 md:border-r border-border bg-card shrink-0 flex flex-col">
         <div className="p-6 pb-4">
-          <h1 className="text-xl font-bold tracking-tight uppercase">Configurações</h1>
+          <h1 className="heading-page">Configurações</h1>
           <p className="label-mono mt-2 text-muted-foreground">Sistema e Governança</p>
         </div>
         <div className="flex md:flex-col overflow-x-auto md:overflow-x-visible px-4 md:px-3 pb-4 md:pb-0 gap-2 no-scrollbar">
@@ -284,8 +284,8 @@ export default function SettingsPage() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-3 px-3 py-3 rounded-lg text-left transition-all shrink-0 md:shrink border ${
                   isActive 
-                    ? "bg-zinc-100 text-black border-transparent shadow-sm" 
-                    : "bg-transparent text-zinc-400 border-transparent hover:bg-zinc-900/50 hover:text-zinc-200"
+                    ? "bg-white text-black border-transparent shadow-sm"
+                    : "bg-transparent text-zinc-400 border-transparent hover:bg-white/5 hover:text-zinc-200"
                 }`}
               >
                 <Icon className={`w-5 h-5 ${isActive ? "text-black" : "text-zinc-500"}`} />
@@ -307,7 +307,7 @@ export default function SettingsPage() {
           {activeTab === "integrations" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <header>
-                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <h2 className="heading-section flex items-center gap-2">
                   <Webhook className="w-5 h-5" /> Integrações & Canais
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">Gerencie a comunicação com o mundo externo.</p>
@@ -332,7 +332,7 @@ export default function SettingsPage() {
                     disabled={isChangingProvider}
                     className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all ${
                       data.activeProvider === 'EVOLUTION' 
-                        ? 'bg-zinc-800 text-white shadow' 
+                    ? 'bg-white text-black shadow'
                         : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                   >
@@ -343,7 +343,7 @@ export default function SettingsPage() {
                     disabled={isChangingProvider}
                     className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all ${
                       data.activeProvider === 'META' 
-                        ? 'bg-zinc-800 text-white shadow' 
+                    ? 'bg-white text-black shadow'
                         : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                   >
@@ -362,7 +362,7 @@ export default function SettingsPage() {
                       />
                     </div>
                   ) : (
-                    <div className="bg-zinc-950/40 border border-zinc-900 rounded-xl p-6 space-y-4">
+                    <div className="surface-noir-muted p-6 space-y-4">
                       <div>
                         <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">Credenciais Meta Cloud</h4>
                         <p className="text-[11px] text-zinc-500 mt-1">Preencha com os dados do painel Meta for Developers.</p>
@@ -372,19 +372,19 @@ export default function SettingsPage() {
                           value={whatsAppForm.phoneNumberId}
                           onChange={(e) => setWhatsAppForm(c => ({ ...c, phoneNumberId: e.target.value }))}
                           placeholder="Phone Number ID"
-                          className="bg-[#050507] border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-zinc-500 w-full"
+                          className="input-noir py-2 text-xs"
                         />
                         <input
                           value={whatsAppForm.wabaId}
                           onChange={(e) => setWhatsAppForm(c => ({ ...c, wabaId: e.target.value }))}
                           placeholder="WhatsApp Business Account ID"
-                          className="bg-[#050507] border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-zinc-500 w-full"
+                          className="input-noir py-2 text-xs"
                         />
                         <input
                           value={whatsAppForm.accessToken}
                           onChange={(e) => setWhatsAppForm(c => ({ ...c, accessToken: e.target.value }))}
                           placeholder={data.whatsappConnectionMeta?.hasAccessToken ? "Token atual seguro/oculto" : "Permanent Access Token"}
-                          className="bg-[#050507] border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-300 focus:outline-none focus:border-zinc-500 w-full md:col-span-2"
+                          className="input-noir py-2 text-xs md:col-span-2"
                         />
                       </div>
                       <button
@@ -422,7 +422,7 @@ export default function SettingsPage() {
                       <button 
                         onClick={handleDisconnectGoogle}
                         disabled={isDisconnectingGoogle}
-                        className="text-xs text-zinc-400 hover:text-red-400 hover:bg-zinc-900 px-3 py-1.5 rounded transition-all"
+                         className="text-xs text-zinc-400 hover:text-red-400 hover:bg-white/5 px-3 py-1.5 rounded transition-all"
                       >
                         Desconectar
                       </button>
@@ -483,7 +483,7 @@ export default function SettingsPage() {
           {activeTab === "ai" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <header>
-                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <h2 className="heading-section flex items-center gap-2">
                   <BrainCircuit className="w-5 h-5" /> Cérebro da IA
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">Programe a mente, contexto de vendas e objeções do seu agente inteligente.</p>
@@ -491,7 +491,7 @@ export default function SettingsPage() {
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
                 {/* Esquerda: Editor */}
-                <section className="glass-noir rounded-xl p-5 space-y-4">
+                <section className="surface-noir p-5 space-y-4">
                   <div className="flex justify-between items-center pb-2 border-b border-white/5">
                     <h3 className="text-sm font-bold text-zinc-200">Editor de Contexto</h3>
                     <button
@@ -507,12 +507,12 @@ export default function SettingsPage() {
                       value={form.name}
                       onChange={(e) => setForm(c => ({ ...c, name: e.target.value }))}
                       placeholder="Nome da Diretriz (ex: Quebra de Objeções)"
-                      className="w-full bg-[#050507] border border-white/10 rounded px-3 py-2 text-xs text-zinc-200 focus:border-indigo-500/50 outline-none"
+                      className="input-noir py-2 text-xs"
                     />
                     <select
                       value={form.category}
                       onChange={(e) => setForm(c => ({ ...c, category: e.target.value }))}
-                      className="w-full bg-[#050507] border border-white/10 rounded px-3 py-2 text-xs text-zinc-200 focus:border-indigo-500/50 outline-none"
+                      className="select-noir py-2 text-xs"
                     >
                       <option value="orchestrator">Orquestrador (Comportamento Base)</option>
                       <option value="auxiliary">Contexto Auxiliar (Regras & Info)</option>
@@ -525,7 +525,7 @@ export default function SettingsPage() {
                         onChange={(e) => setForm(c => ({ ...c, content: e.target.value }))}
                         placeholder="Insira as instruções em texto ou Markdown..."
                         rows={16}
-                        className="relative w-full bg-[#050507] border border-white/10 rounded px-4 py-4 text-xs text-emerald-400/90 font-mono focus:outline-none resize-y"
+                        className="input-noir relative resize-y rounded px-4 py-4 font-mono text-xs text-emerald-400/90"
                       />
                     </div>
                     
@@ -569,7 +569,7 @@ export default function SettingsPage() {
                             </button>
                             <button
                               onClick={() => setForm({ id: template.id, name: template.name, slug: template.slug, category: template.category, content: template.content })}
-                              className="text-[10px] font-bold uppercase px-2 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-300"
+                              className="text-[10px] font-bold uppercase px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-zinc-300"
                             >
                               Editar
                             </button>
@@ -581,7 +581,7 @@ export default function SettingsPage() {
                             </button>
                           </div>
                         </div>
-                        <div className="bg-[#050507] border border-white/5 rounded p-2 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap line-clamp-3">
+                        <div className="rounded border border-white/5 bg-white/[0.03] p-2 text-[11px] text-zinc-500 font-mono whitespace-pre-wrap line-clamp-3">
                           {template.content}
                         </div>
                       </div>
@@ -601,7 +601,7 @@ export default function SettingsPage() {
           {activeTab === "team" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <header>
-                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <h2 className="heading-section flex items-center gap-2">
                   <Users className="w-5 h-5" /> Gestão de Equipe
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">Conecte vendedores à organização para compartilhar acesso a leads e funil.</p>
@@ -649,11 +649,11 @@ export default function SettingsPage() {
                               type="text" 
                               readOnly 
                               value={inviteUrl} 
-                              className="flex-1 bg-[#050507] border border-indigo-500/20 text-indigo-300 text-xs rounded px-3 py-2 outline-none selection:bg-indigo-500/30 font-mono"
+                              className="input-noir flex-1 py-2 text-xs text-indigo-300 selection:bg-indigo-500/30 font-mono"
                             />
                             <button 
                               onClick={copyToClipboard}
-                              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs font-bold transition-all shrink-0"
+                              className="flex items-center gap-1.5 rounded bg-white px-3 py-2 text-xs font-bold text-black transition-all hover:bg-zinc-200 shrink-0"
                             >
                               {isCopied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                               {isCopied ? "Copiado!" : "Copiar Link"}
@@ -675,7 +675,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="glass-noir rounded-xl overflow-hidden">
+              <div className="surface-noir overflow-hidden">
                 <table className="w-full text-left text-sm text-zinc-400">
                   <thead className="text-[10px] text-zinc-500 uppercase bg-zinc-950/50 border-b border-zinc-800 tracking-wider">
                     <tr>
@@ -729,7 +729,7 @@ export default function SettingsPage() {
 
           {activeTab === "menu" && (
             <div className="space-y-6">
-              <div className="rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-6">
+              <div className="surface-noir-muted p-6">
                 <header className="flex items-start justify-between gap-4 mb-6">
                   <div>
                     <h3 className="text-sm font-bold text-zinc-200">Ordenação do Menu</h3>
@@ -787,7 +787,7 @@ export default function SettingsPage() {
           {activeTab === "system" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <header>
-                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <h2 className="heading-section flex items-center gap-2">
                   <Shield className="w-5 h-5" /> Sistema & Diagnóstico
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">Visão geral do ambiente e possíveis alertas de saúde da plataforma.</p>
@@ -800,7 +800,7 @@ export default function SettingsPage() {
                     <AlertTriangle className="w-5 h-5" />
                     <h3 className="text-sm font-bold">Falha de Conexão com o Banco de Dados</h3>
                   </div>
-                  <p className="text-xs text-red-300/70 font-mono bg-black/40 p-3 rounded-lg break-all border border-red-500/10">
+                  <p className="text-xs text-red-300/70 font-mono bg-red-500/5 p-3 rounded-lg break-all border border-red-500/10">
                     {(data as any).errorMessage}
                   </p>
                   <p className="text-[11px] text-zinc-500">
@@ -843,7 +843,7 @@ export default function SettingsPage() {
                     <button
                       onClick={() => void handleSaveNotifications()}
                       disabled={isSavingNotifications}
-                      className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                      className="btn-noir flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs"
                     >
                       <Save className="w-4 h-4" />
                       {isSavingNotifications ? "Salvando..." : "Salvar Configurações"}
@@ -860,7 +860,7 @@ export default function SettingsPage() {
                       onChange={(e) => setNotificationForm(prev => ({ ...prev, dealEmail: e.target.value }))}
                       disabled={data.currentUserRole !== 'owner'}
                       placeholder="Ex: financeiro@empresa.com.br"
-                      className="w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50"
+                      className="input-noir"
                     />
                     <p className="text-[10px] text-zinc-600 mt-1">Obrigatório para usar o botão Despachar Venda. Este e-mail recebe todos os dados do lead e do fechamento.</p>
                   </div>
@@ -873,7 +873,7 @@ export default function SettingsPage() {
                       onChange={(e) => setNotificationForm(prev => ({ ...prev, masterclassEmail: e.target.value }))}
                       disabled={data.currentUserRole !== 'owner'}
                       placeholder="Ex: relacionamento@arcaffo.com.br"
-                      className="w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50"
+                      className="input-noir"
                     />
                     <p className="text-[10px] text-zinc-600 mt-1">E-mail para solicitação de onboarding na masterclass.</p>
                   </div>
@@ -890,7 +890,7 @@ export default function SettingsPage() {
                     <button
                       onClick={() => void handleReprocessMedia()}
                       disabled={isReprocessingMedia}
-                      className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                      className="btn-noir flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs"
                     >
                       {isReprocessingMedia ? "Reprocessando..." : "Reprocessar Mídias"}
                     </button>

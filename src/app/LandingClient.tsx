@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
+import { GlowCard } from "@/components/ui/GlowCard";
 import { 
   BrainCircuit, 
   ShieldAlert, 
@@ -22,48 +23,6 @@ import {
   Sliders,
   Check
 } from "lucide-react";
-
-// Premium Minimalist Card with Border Highlights
-function GlowCard({ 
-  children, 
-  className = "", 
-  glowColor = "rgba(255, 255, 255, 0.04)" 
-}: { 
-  children: React.ReactNode; 
-  className?: string; 
-  glowColor?: string;
-}) {
-  const [coords, setCoords] = useState({ x: 0, y: 0 });
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setCoords({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    });
-  };
-
-  return (
-    <div 
-      onMouseMove={handleMouseMove}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className={`relative p-[1px] rounded bg-zinc-900/60 border border-zinc-800/80 transition-all duration-300 hover:border-zinc-700/80 ${className}`}
-    >
-      <div 
-        className="absolute inset-0 pointer-events-none transition-opacity duration-300"
-        style={{
-          opacity: isHovered ? 1 : 0,
-          background: `radial-gradient(180px circle at ${coords.x}px ${coords.y}px, ${glowColor}, transparent 70%)`
-        }}
-      />
-      <div className="relative z-10 w-full h-full rounded bg-[#09090b] p-6 flex flex-col justify-between">
-        {children}
-      </div>
-    </div>
-  );
-}
 
 interface ChatMsg {
   sender: "lead" | "agent";

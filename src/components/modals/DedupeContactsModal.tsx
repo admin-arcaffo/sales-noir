@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Users, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Users } from "lucide-react";
 import {
   backfillContactIdentitiesBatch,
   getDuplicateContactsReport,
@@ -9,6 +9,7 @@ import {
   type DuplicateContactsReport,
 } from "@/actions/crm";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
 import { invalidateChatCache } from "@/lib/chat-cache";
 
 export function DedupeContactsModal({
@@ -114,21 +115,22 @@ export function DedupeContactsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-white/5 bg-amber-500/10 p-6">
-          <div>
-            <h3 className="flex items-center gap-2 text-lg font-bold text-amber-300">
-              <Users className="h-5 w-5" /> Deduplicacao de contatos
-            </h3>
-            <p className="mt-1 text-xs text-zinc-500">Relatorio historico, merge manual e migracao de identidades.</p>
-          </div>
-          <button onClick={onClose} disabled={isLoading || isBackfilling || Boolean(mergingGroupId)} className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Deduplicacao de contatos"
+      description="Relatorio historico, merge manual e migracao de identidades."
+      icon={<Users className="h-5 w-5 text-amber-300" />}
+      maxWidth="max-w-6xl"
+      closeDisabled={isLoading || isBackfilling || Boolean(mergingGroupId)}
+      headerClassName="bg-amber-500/10 p-6"
+      contentClassName="p-6"
+      footer={(
+        <button onClick={onClose} disabled={isLoading || isBackfilling || Boolean(mergingGroupId)} className="btn-noir-secondary px-5 py-2.5">
+          Fechar
+        </button>
+      )}
+    >
           {isLoading && !report ? (
             <div className="flex h-60 items-center justify-center text-zinc-400">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Carregando duplicados...
@@ -266,14 +268,6 @@ export function DedupeContactsModal({
               )}
             </div>
           ) : null}
-        </div>
-
-        <div className="flex justify-end border-t border-white/5 p-6">
-          <button onClick={onClose} disabled={isLoading || isBackfilling || Boolean(mergingGroupId)} className="rounded-lg bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-60">
-            Fechar
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

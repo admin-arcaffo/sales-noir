@@ -131,7 +131,7 @@ export default function ContactsPage() {
                 <User className="h-5 w-5" />
               </div>
               <div>
-                <h1 className="text-xl font-bold uppercase tracking-wider text-white">Contatos</h1>
+                <h1 className="heading-page">Contatos</h1>
                 <p className="mt-1 text-sm text-zinc-500">{total} contato(s) no total.</p>
               </div>
             </div>
@@ -147,14 +147,14 @@ export default function ContactsPage() {
             </button>
             <button
               onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+              className="btn-noir-secondary flex items-center justify-center gap-2"
             >
               <Upload className="h-4 w-4" />
               Importar
             </button>
             <button
               onClick={() => { setEditingContact(null); setIsFormModalOpen(true); }}
-              className="flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-black transition-colors hover:bg-zinc-200"
+              className="btn-noir flex items-center justify-center gap-2 rounded-lg"
             >
               <Plus className="h-4 w-4" />
               Novo contato
@@ -162,7 +162,7 @@ export default function ContactsPage() {
           </div>
         </header>
 
-        <section className="rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-4">
+        <section className="surface-noir-muted p-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
             <div className="relative md:col-span-2 xl:col-span-2">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
@@ -178,7 +178,7 @@ export default function ContactsPage() {
             <select
               value={leadFilter}
               onChange={(e) => setLeadFilter(e.target.value)}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none"
+              className="select-noir"
             >
               <option value="ALL">Todos os tipos</option>
               <option value="LEAD">Apenas Leads</option>
@@ -188,7 +188,7 @@ export default function ContactsPage() {
             <select
               value={originFilter}
               onChange={(e) => setOriginFilter(e.target.value)}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none"
+              className="select-noir"
             >
               <option value="ALL">Todas origens</option>
               {origins.map((origin) => (
@@ -199,7 +199,7 @@ export default function ContactsPage() {
             <select
               value={productFilter}
               onChange={(e) => setProductFilter(e.target.value)}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none"
+              className="select-noir"
             >
               <option value="ALL">Todos produtos</option>
               {products.map((p) => (
@@ -210,7 +210,7 @@ export default function ContactsPage() {
             <select
               value={assigneeFilter}
               onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none"
+              className="select-noir"
             >
               <option value="ALL">Todos responsáveis</option>
               {users.map((u) => (
@@ -223,11 +223,11 @@ export default function ContactsPage() {
         {isLoading ? (
           <div className="grid gap-3">
             {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-20 animate-pulse rounded-2xl border border-white/[0.04] bg-white/[0.03]" />
+              <div key={i} className="surface-noir-muted h-20 animate-pulse" />
             ))}
           </div>
         ) : contacts.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-[#0c0c0e] p-10 text-center">
+          <div className="surface-noir-muted border-dashed p-10 text-center">
             <User className="mx-auto mb-3 h-8 w-8 text-zinc-700" />
             <p className="font-semibold text-zinc-300">Nenhum contato encontrado</p>
             <p className="mt-1 text-sm text-zinc-600">Importe uma planilha ou crie um novo contato.</p>
@@ -237,7 +237,7 @@ export default function ContactsPage() {
             {contacts.map((contact) => (
               <div
                 key={contact.id}
-                className="rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-4 transition-colors hover:border-white/10"
+                className="surface-noir-muted p-4 transition-colors hover:border-white/10"
               >
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex items-start gap-4 flex-1 min-w-0">

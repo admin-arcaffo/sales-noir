@@ -108,12 +108,44 @@
     @apply px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 rounded text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:pointer-events-none;
   }
 
+  .btn-noir-secondary {
+    @apply rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
   .label-mono {
     @apply font-mono text-[9px] text-zinc-500 uppercase tracking-widest;
   }
 
+  .label-field {
+    @apply text-[10px] font-bold uppercase tracking-wider text-zinc-500;
+  }
+
+  .heading-page {
+    @apply text-xl font-bold uppercase tracking-wider text-white;
+  }
+
+  .heading-section {
+    @apply text-sm font-bold uppercase tracking-wider text-zinc-200;
+  }
+
   .card-noir {
-    @apply bg-[#09090b] border border-zinc-900 rounded p-6;
+    @apply bg-[#09090b] border border-zinc-900 rounded-xl p-6;
+  }
+
+  .surface-noir {
+    @apply rounded-xl border border-zinc-900 bg-[#09090b];
+  }
+
+  .surface-noir-muted {
+    @apply rounded-xl border border-white/[0.06] bg-[#0c0c0e];
+  }
+
+  .input-noir {
+    @apply w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all placeholder:text-zinc-600 focus:border-white/20;
+  }
+
+  .select-noir {
+    @apply w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none transition-all focus:border-white/20;
   }
 }
 
@@ -448,5 +480,4 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .light ::-webkit-scrollbar-thumb:hover {
   background-color: var(--border) !important;
 }
-
 

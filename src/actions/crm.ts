@@ -228,6 +228,7 @@ export type TaskData = {
   conversationId: string | null;
   analysisId: string | null;
   ownerName: string | null;
+  ownerId: string | null;
   isLead: boolean;
 };
 
@@ -1728,6 +1729,7 @@ function mapTaskData(task: any): TaskData {
     conversationId: latestConversation?.id || null,
     analysisId: task.analysisId || null,
     ownerName: task.user?.name || task.user?.email || null,
+    ownerId: task.userId,
     isLead: task.contact?.isLead ?? false,
   };
 }

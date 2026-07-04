@@ -196,7 +196,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
             <button
               onClick={handleStart}
               disabled={isLoading}
-              className="px-6 py-2.5 bg-zinc-100 text-black rounded text-sm font-semibold hover:bg-white transition-all flex items-center gap-2 mx-auto"
+              className="btn-noir mx-auto flex items-center gap-2 rounded text-sm"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gerar QR Code"}
             </button>

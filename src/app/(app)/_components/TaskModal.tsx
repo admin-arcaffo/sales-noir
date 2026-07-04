@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CalendarClock, CheckCircle2, FileText, Flag, MessageSquare, Phone, X } from "lucide-react";
+import { CalendarClock, CheckCircle2, FileText, Flag, MessageSquare, Phone } from "lucide-react";
 import { createTask, updateTask, type TaskData } from "@/actions/crm";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
 
 type TaskModalProps = {
   isOpen: boolean;
@@ -137,32 +138,37 @@ export function TaskModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e] shadow-2xl">
-        <header className="flex items-start justify-between gap-4 border-b border-white/5 bg-white/[0.02] p-5">
-          <div>
-            <div className="flex items-center gap-2 text-zinc-100">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-              <h3 className="font-bold">{isEditMode ? "Editar tarefa" : "Criar tarefa"}</h3>
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">
-              {contactName ? `Vinculada ao contato ${contactName}` : isEditMode ? "Altere os campos desejados." : "Crie uma próxima ação operacional."}
-            </p>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white">
-            <X className="h-5 w-5" />
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEditMode ? "Editar tarefa" : "Criar tarefa"}
+      description={contactName ? `Vinculada ao contato ${contactName}` : isEditMode ? "Altere os campos desejados." : "Crie uma próxima ação operacional."}
+      icon={<CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+      maxWidth="max-w-lg"
+      contentClassName="space-y-4"
+      footer={(
+        <>
+          <button onClick={onClose} className="btn-noir-secondary">
+            Cancelar
           </button>
-        </header>
-
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          <button
+            onClick={() => void handleSave()}
+            disabled={isSaving || (!isEditMode && !title.trim())}
+            className="btn-noir rounded-lg px-5 py-2 text-sm"
+          >
+            {isSaving ? "Salvando..." : isEditMode ? "Salvar alterações" : "Criar tarefa"}
+          </button>
+        </>
+      )}
+    >
           {!isEditMode && (
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Título</label>
+              <label className="label-field">Título</label>
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="Ex: Cobrar retorno da proposta"
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all placeholder:text-zinc-600 focus:border-white/20"
+                className="input-noir"
                 autoFocus
               />
             </div>
@@ -170,11 +176,11 @@ export function TaskModal({
 
           {!contactId && !isEditMode && contactOptions.length > 0 && (
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Contato vinculado</label>
+              <label className="label-field">Contato vinculado</label>
               <select
                 value={selectedContactId}
                 onChange={(event) => setSelectedContactId(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all focus:border-white/20"
+                className="select-noir"
               >
                 <option value="">Selecionar contato...</option>
                 {contactOptions.map((contact) => (
@@ -186,11 +192,11 @@ export function TaskModal({
 
           {assigneeOptions.length > 0 && (
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Responsável</label>
+              <label className="label-field">Responsável</label>
               <select
                 value={selectedAssigneeId}
                 onChange={(event) => setSelectedAssigneeId(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all focus:border-white/20"
+                className="select-noir"
               >
                 <option value="">{isEditMode ? "Manter atual" : "Eu mesmo"}</option>
                 {assigneeOptions.map((assignee) => (
@@ -203,11 +209,11 @@ export function TaskModal({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {isEditMode && (
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Status</label>
+                <label className="label-field">Status</label>
                 <select
                   value={status}
                   onChange={(event) => setStatus(event.target.value)}
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all focus:border-white/20"
+                  className="select-noir"
                 >
                   <option value="PENDING">Pendente</option>
                   <option value="DONE">Concluída</option>
@@ -216,13 +222,13 @@ export function TaskModal({
             )}
 
             <div className="space-y-1.5">
-              <label className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              <label className="label-field flex items-center gap-1">
                 <Flag className="h-3 w-3" /> Prioridade
               </label>
               <select
                 value={priority}
                 onChange={(event) => setPriority(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all focus:border-white/20"
+                className="select-noir"
               >
                 {priorities.map((item) => (
                   <option key={item.value} value={item.value}>{item.label}</option>
@@ -231,42 +237,27 @@ export function TaskModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              <label className="label-field flex items-center gap-1">
                 <CalendarClock className="h-3 w-3" /> Prazo
               </label>
               <input
                 type="datetime-local"
                 value={dueAt}
                 onChange={(event) => setDueAt(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 outline-none transition-all focus:border-white/20"
+                className="input-noir"
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Descrição</label>
+            <label className="label-field">Descrição</label>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Contexto, combinado com o lead ou orientação para a próxima ação..."
-              className="min-h-24 w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-relaxed text-zinc-300 outline-none transition-all placeholder:text-zinc-700 focus:border-white/20"
+              className="input-noir min-h-24 resize-none rounded-xl bg-white/[0.03] p-3 leading-relaxed text-zinc-300 placeholder:text-zinc-700"
             />
           </div>
-        </div>
-
-        <footer className="flex justify-end gap-3 border-t border-white/5 bg-white/[0.02] p-5">
-          <button onClick={onClose} className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700">
-            Cancelar
-          </button>
-          <button
-            onClick={() => void handleSave()}
-            disabled={isSaving || (!isEditMode && !title.trim())}
-            className="rounded-lg bg-white px-5 py-2 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {isSaving ? "Salvando..." : isEditMode ? "Salvar alterações" : "Criar tarefa"}
-          </button>
-        </footer>
-      </div>
-    </div>
+    </Modal>
   );
 }

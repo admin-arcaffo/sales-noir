@@ -59,7 +59,7 @@ function KpiCard({ label, value, helper, icon: Icon, tone = "emerald" }: { label
   }[tone];
 
   return (
-    <div className="bg-[#09090b] border border-zinc-900 rounded p-5 space-y-4">
+    <div className="surface-noir p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className={`w-9 h-9 rounded-xl border flex items-center justify-center ${toneClass}`}>
           <Icon className="w-4 h-4" />
@@ -67,7 +67,7 @@ function KpiCard({ label, value, helper, icon: Icon, tone = "emerald" }: { label
         <span className="label-mono">{helper}</span>
       </div>
       <div>
-        <p className="text-2xl font-extrabold text-white tracking-tight">{value}</p>
+        <p className="text-3xl font-extrabold text-white tracking-tight">{value}</p>
         <p className="label-mono mt-1">{label}</p>
       </div>
     </div>
@@ -76,7 +76,7 @@ function KpiCard({ label, value, helper, icon: Icon, tone = "emerald" }: { label
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="bg-[#09090b] border border-zinc-900 rounded overflow-hidden">
+    <section className="surface-noir overflow-hidden">
       <div className="p-5 border-b border-zinc-900 flex items-center gap-2">
         <BarChart3 className="w-4 h-4 text-zinc-500" />
         <h2 className="label-mono text-zinc-300">{title}</h2>
@@ -206,22 +206,22 @@ export function ReportsClient({ initialData }: ReportsClientProps) {
         <header className="flex flex-col gap-3">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <h1 className="text-lg font-bold tracking-tight text-white uppercase tracking-wider">Relatorios</h1>
+              <h1 className="heading-page">Relatorios</h1>
               <p className="text-[11px] text-zinc-500 hidden sm:block">Financeiro, comercial, pipeline e risco</p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 bg-[#09090b] p-2 rounded border border-zinc-900">
+            <div className="surface-noir flex flex-wrap items-center gap-2 p-2">
               <div className="flex items-center gap-1.5 text-zinc-400 mr-1">
                 <Filter className="w-3.5 h-3.5" />
                 {isPending && <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />}
               </div>
-              <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-300 focus:outline-none w-[130px]" />
-              <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-300 focus:outline-none w-[130px]" />
-              <select value={userId} onChange={(event) => setUserId(event.target.value)} className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-300 focus:outline-none">
+              <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="select-noir w-[130px] px-2 py-1 text-[11px]" />
+              <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="select-noir w-[130px] px-2 py-1 text-[11px]" />
+              <select value={userId} onChange={(event) => setUserId(event.target.value)} className="select-noir w-auto px-2 py-1 text-[11px]">
                 <option value="">Todos vendedores</option>
                 {data.users.map((user) => <option key={user.id} value={user.id}>{user.name || "Sem nome"}</option>)}
               </select>
-              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-300 focus:outline-none">
+              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="select-noir w-auto px-2 py-1 text-[11px]">
                 <option value="">Todos produtos</option>
                 {data.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select>
@@ -236,7 +236,7 @@ export function ReportsClient({ initialData }: ReportsClientProps) {
                   </button>
                 </div>
                 {showFormatMenu && (
-                  <div className="absolute right-0 top-full mt-1 w-28 bg-[#09090b] border border-zinc-800 rounded shadow-xl z-50 overflow-hidden">
+                  <div className="surface-noir absolute right-0 top-full z-50 mt-1 w-28 overflow-hidden shadow-xl">
                     {(["xlsx", "csv", "pdf"] as const).map((f) => (
                       <button
                         key={f}

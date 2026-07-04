@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Filter, MessageSquare, Phone, Save, Search, Tag, Users, Edit, X, Wand2, Mail, Building, LayoutTemplate, Briefcase, TrendingUp, AlertTriangle, Settings, Plus, Trash2, Lock, User, ChevronDown, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { temperatureBadgeClasses } from "@/components/ui/noir";
 import { 
   getLeads, 
   updateConversationStage, 
@@ -57,11 +58,7 @@ type TaskLeadDraft = {
 
 const STAGES_REQUIRING_PRODUCT = ["APRESENTACAO_PROPOSTA", "NEGOCIACAO", "OBJECAO", "FOLLOW_UP", "FECHAMENTO"];
 
-const tempStyles: Record<string, string> = {
-  HOT: "text-rose-400 bg-rose-500/10 border-rose-500/20",
-  WARM: "text-amber-500 bg-amber-500/10 border-amber-500/20",
-  COLD: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
-};
+const tempStyles: Record<string, string> = temperatureBadgeClasses;
 
 const KANBAN_STAGES = [
   { id: "PRIMEIRO_CONTATO", title: "1º Contato", color: "bg-zinc-500" },
@@ -533,7 +530,7 @@ export default function LeadsPage() {
         {/* Row 1: Title, Search, Filter Toggle, Settings */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white uppercase tracking-wider flex items-center gap-3">
+            <h1 className="heading-page flex items-center gap-3">
               Pipeline Comercial
               <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold uppercase tracking-wider">
                 {filteredLeads.length} Leads
@@ -551,7 +548,7 @@ export default function LeadsPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Buscar leads..."
-                className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder:text-zinc-600 text-zinc-200"
+                className="input-noir py-2 pl-9 pr-4"
               />
             </div>
 
@@ -559,7 +556,7 @@ export default function LeadsPage() {
               {/* Criar Lead Button */}
               <button
                 onClick={() => setIsCreateLeadModalOpen(true)}
-                className="py-2 px-3.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 border border-emerald-600 text-xs font-bold text-white flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                className="btn-noir flex items-center gap-2 rounded-lg"
               >
                 <Plus className="w-4 h-4" />
                 <span>Criar Lead</span>
@@ -568,10 +565,10 @@ export default function LeadsPage() {
               {/* Filter Button */}
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className={`py-2 px-3.5 rounded-lg border text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-semibold transition-all cursor-pointer ${
                   showFilters || activeFiltersCount > 0
-                    ? "bg-[#6366f1]/10 border-[#6366f1]/40 text-indigo-300 hover:bg-[#6366f1]/20"
-                    : "bg-[#0f0f11] border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                    ? "border-white/20 bg-white/10 text-white hover:bg-white/15"
+                    : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white"
                 }`}
               >
                 <Filter className="w-4 h-4" />
@@ -586,7 +583,7 @@ export default function LeadsPage() {
               {/* Settings Button */}
               <button
                 onClick={() => setIsConfigModalOpen(true)}
-                className="p-2 py-2 px-3 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-all flex items-center gap-2 cursor-pointer"
+                className="btn-noir-secondary flex items-center gap-2 px-3 py-2"
                 title="Configurações da Pipeline"
               >
                 <Settings className="w-4 h-4" />
@@ -598,7 +595,7 @@ export default function LeadsPage() {
 
         {/* Collapsible Advanced Filters Row */}
         {showFilters && (
-          <div className="p-4 rounded-xl border border-zinc-800 bg-[#0d0d0f] flex flex-col md:flex-row md:items-center gap-4 animate-in slide-in-from-top-2 duration-200 flex-wrap">
+          <div className="surface-noir-muted flex flex-col gap-4 p-4 animate-in slide-in-from-top-2 duration-200 md:flex-row md:items-center flex-wrap">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 flex-wrap">
               {/* Dropdowns */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full md:w-auto flex-1 max-w-2xl">
@@ -608,7 +605,7 @@ export default function LeadsPage() {
                     setUserFilter(event.target.value);
                     if (event.target.value !== "ALL") setOwnershipFilter("ALL");
                   }}
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-350 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                  className="select-noir py-2 text-xs"
                 >
                   <option value="ALL">Todos os responsáveis</option>
                   <option value="UNASSIGNED">Sem responsável</option>
@@ -620,7 +617,7 @@ export default function LeadsPage() {
                 <select
                   value={productFilter}
                   onChange={(event) => setProductFilter(event.target.value)}
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-355 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                  className="select-noir py-2 text-xs"
                 >
                   <option value="ALL">Todos os produtos</option>
                   <option value="NONE">Sem produto</option>
@@ -632,7 +629,7 @@ export default function LeadsPage() {
                 <select
                   value={originFilter}
                   onChange={(event) => setOriginFilter(event.target.value)}
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-355 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                  className="select-noir py-2 text-xs"
                 >
                   <option value="ALL">Todas as origens</option>
                   {leadOrigins.map((origin) => (
@@ -650,7 +647,7 @@ export default function LeadsPage() {
                       onClick={() => setOwnershipFilter(value as "ALL" | "MINE")}
                       className={`px-2.5 py-1.5 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
                         ownershipFilter === value
-                          ? "bg-indigo-500 text-white shadow-sm"
+                          ? "bg-zinc-100 text-black shadow-sm"
                           : "text-zinc-400 hover:text-white"
                       }`}
                     >
@@ -726,7 +723,7 @@ export default function LeadsPage() {
             return (
               <div 
                 key={column.id} 
-                className={`flex flex-col shrink-0 h-full max-h-full bg-[#050507] border border-zinc-900 rounded p-3 transition-all duration-200 overflow-hidden ${
+                className={`surface-noir flex flex-col shrink-0 h-full max-h-full p-3 transition-all duration-200 overflow-hidden ${
                   collapsedStages.has(column.id) ? "w-14" : "w-[320px]"
                 }`}
                 onDragOver={handleDragOver}
@@ -763,7 +760,7 @@ export default function LeadsPage() {
                       onDragStart={(e) => handleDragStart(e, lead.id)}
                       onDragEnd={handleDragEnd}
                       onClick={() => setSelectedLead(lead)}
-                      className="bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-850 p-3 rounded cursor-pointer transition-all group relative"
+                      className="group relative cursor-pointer rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 transition-all hover:border-white/10 hover:bg-white/[0.05]"
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div>
@@ -824,7 +821,7 @@ export default function LeadsPage() {
                         )}
 
                         {lead.nextTask && (
-                          <div className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-zinc-400">
+                          <div className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-400">
                             <span className="font-bold text-zinc-300">Próxima:</span> {lead.nextTask.title} • {lead.nextTask.due}
                           </div>
                         )}
@@ -887,7 +884,7 @@ export default function LeadsPage() {
       {/* Lead Card Modal */}
       {selectedLead && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl">
+          <div className="surface-noir-muted flex max-h-[90vh] w-full max-w-3xl flex-col shadow-2xl">
             <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0">
               <h3 className="font-bold text-lg flex items-center gap-2">
                 <Briefcase className="w-5 h-5 text-zinc-400" /> Card do Lead
@@ -909,7 +906,7 @@ export default function LeadsPage() {
                       type="text" 
                       value={selectedLead.name}
                       onChange={(e) => setSelectedLead({ ...selectedLead, name: e.target.value })}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all"
+                      className="input-noir"
                     />
                   </div>
                   
@@ -919,7 +916,7 @@ export default function LeadsPage() {
                       type="text" 
                       value={selectedLead.phone}
                       disabled
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm opacity-60 cursor-not-allowed"
+                      className="input-noir cursor-not-allowed opacity-60"
                     />
                   </div>
 
@@ -930,7 +927,7 @@ export default function LeadsPage() {
                       value={selectedLead.email || ""}
                       onChange={(e) => setSelectedLead({ ...selectedLead, email: e.target.value })}
                       placeholder="email@exemplo.com"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all"
+                      className="input-noir"
                     />
                   </div>
                 </div>
@@ -945,7 +942,7 @@ export default function LeadsPage() {
                       value={selectedLead.company || ""}
                       onChange={(e) => setSelectedLead({ ...selectedLead, company: e.target.value })}
                       placeholder="Nome da empresa"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all"
+                      className="input-noir"
                     />
                   </div>
 
@@ -958,7 +955,7 @@ export default function LeadsPage() {
                         value={selectedLead.monthlyRevenue || ""}
                         onChange={(e) => setSelectedLead({ ...selectedLead, monthlyRevenue: e.target.value ? parseFloat(e.target.value) : null })}
                         placeholder="0.00"
-                        className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-8 pr-3 text-sm focus:outline-none focus:border-white/20 transition-all"
+                        className="input-noir py-2 pl-8 pr-3"
                       />
                     </div>
                   </div>
@@ -968,7 +965,7 @@ export default function LeadsPage() {
                     <select 
                       value={selectedLead.origin || ""}
                       onChange={(e) => setSelectedLead({ ...selectedLead, origin: e.target.value || null })}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                      className="select-noir"
                     >
                       <option value="">Não informado</option>
                       {leadOrigins.map(o => (
@@ -1031,7 +1028,7 @@ export default function LeadsPage() {
                   <button
                     type="button"
                     onClick={() => setPendingClosedDeal({ leadId: selectedLead.id, newStage: selectedLead.stageKey, newStageLabel: selectedLead.stage })}
-                    className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+                    className="btn-noir rounded-lg px-4 py-2 text-xs"
                   >
                     Despachar Venda
                   </button>
@@ -1058,31 +1055,31 @@ export default function LeadsPage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Valor total</p>
                       <p className="text-sm font-bold text-white mt-1">{formatMoney(selectedLead.closedDeal.totalValue)}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Parcelas</p>
                       <p className="text-sm font-bold text-white mt-1">{selectedLead.closedDeal.installmentCount || 1}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Tempo de projeto</p>
                       <p className="text-sm font-bold text-white mt-1">{selectedLead.closedDeal.projectDuration || "Nao informado"}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Vencimento</p>
                       <p className="text-sm font-bold text-white mt-1">{formatShortDate(selectedLead.closedDeal.firstPaymentDate)}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Pagamento</p>
                       <p className="text-sm font-bold text-white mt-1">{selectedLead.closedDeal.paymentMethod || "Nao informado"}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Sinal</p>
                       <p className="text-sm font-bold text-white mt-1">{selectedLead.closedDeal.hasSignal ? formatMoney(selectedLead.closedDeal.signalValue) : "Nao"}</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/20 p-3 md:col-span-2">
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:col-span-2">
                       <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Observacoes da venda</p>
                       <p className="text-sm text-zinc-300 mt-1 whitespace-pre-wrap">{selectedLead.closedDeal.notes || "Nenhuma observacao"}</p>
                     </div>
@@ -1096,7 +1093,7 @@ export default function LeadsPage() {
                   <button 
                     onClick={() => handleSuggestChallenges(selectedLead.id)}
                     disabled={isSuggestingChallenges}
-                    className="text-[11px] bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    className="btn-noir-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
                   >
                     <Wand2 className="w-3 h-3" />
                     {isSuggestingChallenges ? "Analisando..." : "Sugerir com IA"}
@@ -1107,7 +1104,7 @@ export default function LeadsPage() {
                   value={selectedLead.mainChallenges || ""}
                   onChange={(e) => setSelectedLead({ ...selectedLead, mainChallenges: e.target.value })}
                   placeholder="Quais as principais dores e desafios atuais do lead?"
-                  className="w-full bg-white/[0.03] border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-white/20 transition-all min-h-[120px] resize-none leading-relaxed text-zinc-300"
+                  className="input-noir min-h-[120px] resize-none rounded-xl p-4 leading-relaxed text-zinc-300"
                 />
               </div>
               
@@ -1117,7 +1114,7 @@ export default function LeadsPage() {
                   value={selectedLead.notes || ""}
                   onChange={(e) => setSelectedLead({ ...selectedLead, notes: e.target.value })}
                   placeholder="Anotações gerais sobre a negociação..."
-                  className="w-full bg-white/[0.03] border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-white/20 transition-all min-h-[100px] resize-none text-zinc-400"
+                  className="input-noir min-h-[100px] resize-none rounded-xl p-4 text-zinc-400"
                 />
               </div>
 
@@ -1135,7 +1132,7 @@ export default function LeadsPage() {
                     </button>
                     <button
                       onClick={() => setConfirmDeleteLeadId(null)}
-                      className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors"
+                      className="btn-noir-secondary px-4 py-2.5"
                     >
                       Cancelar
                     </button>
@@ -1153,27 +1150,27 @@ export default function LeadsPage() {
               <div className="flex flex-wrap items-center gap-2 md:ml-auto">
                 <button
                   onClick={() => setInviteMasterclassLeadId(selectedLead.id)}
-                  className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/20 transition-colors flex items-center justify-center gap-2"
+                  className="btn-noir-secondary flex items-center justify-center gap-2 px-4 py-2.5"
                 >
                   Masterclass
                 </button>
                 <button
                   onClick={() => setTaskLead({ lead: selectedLead })}
-                  className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors flex items-center justify-center gap-2"
+                  className="btn-noir-secondary flex items-center justify-center gap-2 px-4 py-2.5"
                 >
                   <Plus className="w-4 h-4" />
                   Tarefa
                 </button>
                 <button 
                   onClick={() => { setSelectedLead(null); setConfirmDeleteLeadId(null); }}
-                  className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors"
+                  className="btn-noir-secondary px-5 py-2.5"
                 >
                   Cancelar
                 </button>
                 <button 
                   onClick={handleSaveLead}
                   disabled={isEditingLead}
-                  className="px-6 py-2.5 rounded-lg text-sm font-bold bg-white text-black hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                  className="btn-noir flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-sm disabled:opacity-60"
                 >
                   {isEditingLead ? "Salvando..." : (
                     <>
@@ -1239,7 +1236,7 @@ export default function LeadsPage() {
       {/* Product Required Gate Modal */}
       {pendingMove && STAGES_REQUIRING_PRODUCT.includes(pendingMove.newStage) && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
+          <div className="surface-noir-muted w-full max-w-md shadow-2xl">
             <div className="p-6 border-b border-white/5">
               <h3 className="font-bold text-lg flex items-center gap-2 text-amber-400">
                 <Tag className="w-5 h-5" /> Produto Obrigatório
@@ -1253,7 +1250,7 @@ export default function LeadsPage() {
               <select
                 value={pendingProductId}
                 onChange={(e) => setPendingProductId(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500/50 text-zinc-200"
+                className="select-noir py-3"
               >
                 <option value="">Selecione um produto...</option>
                 {products.filter(p => p.isActive).map(p => (
@@ -1269,14 +1266,14 @@ export default function LeadsPage() {
                   setPendingProductId(""); 
                   setLeads(current => [...current]); // Force render to reset stuck drag-and-drop visuals
                 }}
-                className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors"
+                className="btn-noir-secondary px-5 py-2.5"
               >
                 Cancelar
               </button>
               <button
                 onClick={() => void handleConfirmPendingMove()}
                 disabled={!pendingProductId}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-amber-500 text-black hover:bg-amber-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                className="btn-noir rounded-lg px-6 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-30"
               >
                 Confirmar e Avançar
               </button>
@@ -1288,7 +1285,7 @@ export default function LeadsPage() {
       {/* Configuration / Pipeline Settings Modal */}
       {isConfigModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="surface-noir-muted flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/[0.02]">
               <div>
                 <h3 className="font-bold text-lg flex items-center gap-2 text-zinc-100">
@@ -1308,33 +1305,33 @@ export default function LeadsPage() {
             </div>
 
             {/* Modal Tabs */}
-            <div className="flex border-b border-white/5 bg-[#08080a] shrink-0">
+            <div className="flex shrink-0 gap-1 border-b border-white/5 bg-white/[0.02] p-2">
               <button
                 onClick={() => setConfigTab("products")}
-                className={`flex-1 py-4 text-sm font-semibold border-b-2 transition-all flex items-center justify-center gap-2 ${
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all ${
                   configTab === "products"
-                    ? "border-amber-500 text-amber-400 bg-white/[0.02]"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-white text-black"
+                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
                 }`}
               >
                 <Tag className="w-4 h-4" /> Produtos & Serviços
               </button>
               <button
                 onClick={() => setConfigTab("origins")}
-                className={`flex-1 py-4 text-sm font-semibold border-b-2 transition-all flex items-center justify-center gap-2 ${
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all ${
                   configTab === "origins"
-                    ? "border-amber-500 text-amber-400 bg-white/[0.02]"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-white text-black"
+                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
                 }`}
               >
                 <Filter className="w-4 h-4" /> Origens de Lead
               </button>
               <button
                 onClick={() => setConfigTab("stages")}
-                className={`flex-1 py-4 text-sm font-semibold border-b-2 transition-all flex items-center justify-center gap-2 ${
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all ${
                   configTab === "stages"
-                    ? "border-amber-500 text-amber-400 bg-white/[0.02]"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-white text-black"
+                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
                 }`}
               >
                 <LayoutTemplate className="w-4 h-4" /> Estágios do Funil
@@ -1342,11 +1339,11 @@ export default function LeadsPage() {
             </div>
 
             {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#0c0c0e]">
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {configTab === "products" ? (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Create product form */}
-                  <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-xl p-5 space-y-4 h-fit">
+                  <div className="surface-noir h-fit p-5 space-y-4 lg:col-span-1">
                     <h4 className="font-bold text-sm text-zinc-200 flex items-center gap-2">
                       <Plus className="w-4 h-4 text-amber-500" /> Cadastrar Produto
                     </h4>
@@ -1359,7 +1356,7 @@ export default function LeadsPage() {
                           value={newProductName}
                           onChange={(e) => setNewProductName(e.target.value)}
                           placeholder="Ex: Consultoria Branding"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                          className="input-noir"
                         />
                       </div>
                       
@@ -1370,7 +1367,7 @@ export default function LeadsPage() {
                           value={newProductPrice}
                           onChange={(e) => setNewProductPrice(e.target.value)}
                           placeholder="Ex: 5000"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                          className="input-noir"
                         />
                       </div>
 
@@ -1380,7 +1377,7 @@ export default function LeadsPage() {
                           value={newProductDesc}
                           onChange={(e) => setNewProductDesc(e.target.value)}
                           placeholder="Ex: 4 sessões estratégicas..."
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200 h-20 resize-none"
+                          className="input-noir h-20 resize-none"
                         />
                       </div>
 
@@ -1398,7 +1395,7 @@ export default function LeadsPage() {
                           refreshData();
                         }}
                         disabled={!newProductName}
-                        className="w-full py-2.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="btn-noir w-full rounded-lg py-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Salvar Produto
                       </button>
@@ -1411,25 +1408,25 @@ export default function LeadsPage() {
                     
                     <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
                       {products.filter(p => p.isActive).map(p => (
-                        <div key={p.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex items-start justify-between gap-4">
+                        <div key={p.id} className="surface-noir-muted flex items-start justify-between gap-4 p-4">
                           {editingProductId === p.id ? (
                             <div className="flex-1 space-y-3">
                               <input
                                 type="text"
                                 value={editingProductName}
                                 onChange={(e) => setEditingProductName(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-zinc-200"
+                                className="input-noir py-1.5"
                               />
                               <input
                                 type="number"
                                 value={editingProductPrice}
                                 onChange={(e) => setEditingProductPrice(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-zinc-200"
+                                className="input-noir py-1.5"
                               />
                               <textarea
                                 value={editingProductDesc}
                                 onChange={(e) => setEditingProductDesc(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-zinc-200 h-16 resize-none"
+                                className="input-noir h-16 resize-none py-1.5 text-xs"
                               />
                               <div className="flex gap-2">
                                 <button
@@ -1442,11 +1439,11 @@ export default function LeadsPage() {
                                     setEditingProductId(null);
                                     refreshData();
                                   }}
-                                  className="px-3 py-1 bg-emerald-500 text-black text-xs font-bold rounded"
+                                  className="btn-noir rounded px-3 py-1 text-xs"
                                 >
                                   Salvar
                                 </button>
-                                <button onClick={() => setEditingProductId(null)} className="px-3 py-1 bg-zinc-800 text-white text-xs font-bold rounded">
+                                <button onClick={() => setEditingProductId(null)} className="btn-noir-secondary rounded px-3 py-1 text-xs">
                                   Cancelar
                                 </button>
                               </div>
@@ -1499,7 +1496,7 @@ export default function LeadsPage() {
               ) : configTab === "origins" ? (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Create Lead Origin form */}
-                  <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-xl p-5 space-y-4 h-fit">
+                  <div className="surface-noir h-fit p-5 space-y-4 lg:col-span-1">
                     <h4 className="font-bold text-sm text-zinc-200 flex items-center gap-2">
                       <Plus className="w-4 h-4 text-amber-500" /> Nova Origem
                     </h4>
@@ -1512,7 +1509,7 @@ export default function LeadsPage() {
                           value={newOriginName}
                           onChange={(e) => setNewOriginName(e.target.value)}
                           placeholder="Ex: Instagram Ads, Indicação"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                          className="input-noir"
                         />
                       </div>
 
@@ -1524,7 +1521,7 @@ export default function LeadsPage() {
                           refreshData();
                         }}
                         disabled={!newOriginName}
-                        className="w-full py-2.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="btn-noir w-full rounded-lg py-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Salvar Origem
                       </button>
@@ -1537,14 +1534,14 @@ export default function LeadsPage() {
                     
                     <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
                       {leadOrigins.map(o => (
-                        <div key={o.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex items-center justify-between gap-4">
+                        <div key={o.id} className="surface-noir-muted flex items-center justify-between gap-4 p-4">
                           {editingOriginId === o.id ? (
                             <div className="flex-1 flex gap-2">
                               <input
                                 type="text"
                                 value={editingOriginName}
                                 onChange={(e) => setEditingOriginName(e.target.value)}
-                                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1 text-sm text-zinc-200"
+                                className="input-noir flex-1 py-1"
                               />
                               <button
                                 onClick={async () => {
@@ -1552,11 +1549,11 @@ export default function LeadsPage() {
                                   setEditingOriginId(null);
                                   refreshData();
                                 }}
-                                className="px-3 py-1 bg-emerald-500 text-black text-xs font-bold rounded"
+                                className="btn-noir rounded px-3 py-1 text-xs"
                               >
                                 Salvar
                               </button>
-                              <button onClick={() => setEditingOriginId(null)} className="px-3 py-1 bg-zinc-800 text-white text-xs font-bold rounded">
+                              <button onClick={() => setEditingOriginId(null)} className="btn-noir-secondary rounded px-3 py-1 text-xs">
                                 Cancelar
                               </button>
                             </div>
@@ -1598,7 +1595,7 @@ export default function LeadsPage() {
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Create stage form */}
-                  <div className="lg:col-span-1 bg-white/[0.02] border border-white/5 rounded-xl p-5 space-y-4 h-fit">
+                  <div className="surface-noir h-fit p-5 space-y-4 lg:col-span-1">
                     <h4 className="font-bold text-sm text-zinc-200 flex items-center gap-2">
                       <Plus className="w-4 h-4 text-amber-500" /> Novo Estágio
                     </h4>
@@ -1611,7 +1608,7 @@ export default function LeadsPage() {
                           value={newStageName}
                           onChange={(e) => setNewStageName(e.target.value)}
                           placeholder="Ex: Reunião Agendada"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                          className="input-noir"
                         />
                       </div>
 
@@ -1641,7 +1638,7 @@ export default function LeadsPage() {
                           refreshData();
                         }}
                         disabled={!newStageName}
-                        className="w-full py-2.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="btn-noir w-full rounded-lg py-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Salvar Estágio
                       </button>
@@ -1654,14 +1651,14 @@ export default function LeadsPage() {
                     
                     <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
                       {pipelineStages.map((stage, index) => (
-                        <div key={stage.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex items-center justify-between gap-4">
+                        <div key={stage.id} className="surface-noir-muted flex items-center justify-between gap-4 p-4">
                           {editingStageId === stage.id ? (
                             <div className="flex-1 space-y-3">
                               <input
                                 type="text"
                                 value={editingStageName}
                                 onChange={(e) => setEditingStageName(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-zinc-200"
+                                className="input-noir py-1.5"
                               />
                               <div>
                                 <label className="text-[9px] uppercase font-bold tracking-wider text-zinc-500 mb-1.5 block">Alterar Cor</label>
@@ -1689,11 +1686,11 @@ export default function LeadsPage() {
                                     setEditingStageId(null);
                                     refreshData();
                                   }}
-                                  className="px-3 py-1 bg-emerald-500 text-black text-xs font-bold rounded"
+                                  className="btn-noir rounded px-3 py-1 text-xs"
                                 >
                                   Salvar
                                 </button>
-                                <button onClick={() => setEditingStageId(null)} className="px-3 py-1 bg-zinc-800 text-white text-xs font-bold rounded">
+                                <button onClick={() => setEditingStageId(null)} className="btn-noir-secondary rounded px-3 py-1 text-xs">
                                   Cancelar
                                 </button>
                               </div>
@@ -1790,7 +1787,7 @@ export default function LeadsPage() {
                   setIsConfigModalOpen(false);
                   refreshData();
                 }}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-zinc-800 text-zinc-200 hover:bg-zinc-700 transition-colors"
+                className="btn-noir-secondary rounded-lg px-6 py-2.5 text-sm"
               >
                 Fechar Configurações
               </button>
@@ -1802,7 +1799,7 @@ export default function LeadsPage() {
       {/* Stage Deletion Migration Modal */}
       {deletingStageId && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
+          <div className="surface-noir-muted w-full max-w-md shadow-2xl">
             <div className="p-6 border-b border-white/5">
               <h3 className="font-bold text-lg flex items-center gap-2 text-red-400">
                 <AlertTriangle className="w-5 h-5" /> Excluir Estágio Comercial
@@ -1817,7 +1814,7 @@ export default function LeadsPage() {
               <select
                 value={migrationStageName}
                 onChange={(e) => setMigrationStageName(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-500/50 text-zinc-200"
+                className="select-noir py-3 focus:border-red-500/50"
               >
                 {pipelineStages
                   .filter(s => s.id !== deletingStageId)
@@ -1831,7 +1828,7 @@ export default function LeadsPage() {
             <div className="p-6 border-t border-white/5 flex justify-end gap-3">
               <button
                 onClick={() => { setDeletingStageId(null); setMigrationStageName(""); }}
-                className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors"
+                className="btn-noir-secondary px-5 py-2.5"
               >
                 Cancelar
               </button>
@@ -1883,8 +1880,8 @@ export default function LeadsPage() {
       {/* === MODAL: CRIAR LEAD === */}
       {isCreateLeadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl overflow-hidden max-h-[90vh]">
-            <header className="px-6 py-4 border-b border-white/5 bg-[#121214] flex items-center justify-between shrink-0">
+          <div className="surface-noir-muted flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between border-b border-white/5 bg-white/[0.02] px-6 py-4">
               <h3 className="font-bold text-base flex items-center gap-2 text-zinc-100">
                 <Plus className="w-5 h-5 text-emerald-500" /> Criar Novo Lead
               </h3>
@@ -1906,7 +1903,7 @@ export default function LeadsPage() {
                     placeholder="Ex: Arthur Fava"
                     value={newLeadName}
                     onChange={(e) => setNewLeadName(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200 placeholder:text-zinc-600"
+                    className="input-noir py-2.5"
                   />
                 </div>
 
@@ -1918,7 +1915,7 @@ export default function LeadsPage() {
                     placeholder="Ex: 5511999999999"
                     value={newLeadPhone}
                     onChange={(e) => setNewLeadPhone(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200 placeholder:text-zinc-600"
+                    className="input-noir py-2.5"
                   />
                   <p className="text-[9px] text-zinc-550 mt-1">Inclua DDI (55) + DDD + número (somente números).</p>
                 </div>
@@ -1930,7 +1927,7 @@ export default function LeadsPage() {
                     placeholder="Ex: lead@exemplo.com"
                     value={newLeadEmail}
                     onChange={(e) => setNewLeadEmail(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200 placeholder:text-zinc-600"
+                    className="input-noir py-2.5"
                   />
                 </div>
 
@@ -1941,7 +1938,7 @@ export default function LeadsPage() {
                     placeholder="Ex: Minha Empresa"
                     value={newLeadCompany}
                     onChange={(e) => setNewLeadCompany(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200 placeholder:text-zinc-600"
+                    className="input-noir py-2.5"
                   />
                 </div>
 
@@ -1950,7 +1947,7 @@ export default function LeadsPage() {
                   <select
                     value={newLeadOrigin}
                     onChange={(e) => setNewLeadOrigin(e.target.value)}
-                    className="w-full bg-[#121214] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                    className="select-noir py-2.5"
                   >
                     <option value="">Não informada</option>
                     {leadOrigins.map((o) => (
@@ -1964,7 +1961,7 @@ export default function LeadsPage() {
                   <select
                     value={newLeadProduct}
                     onChange={(e) => setNewLeadProduct(e.target.value)}
-                    className="w-full bg-[#121214] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                    className="select-noir py-2.5"
                   >
                     <option value="">Nenhum</option>
                     {products.map((p) => (
@@ -1978,7 +1975,7 @@ export default function LeadsPage() {
                   <select
                     value={newLeadTemp}
                     onChange={(e) => setNewLeadTemp(e.target.value)}
-                    className="w-full bg-[#121214] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                    className="select-noir py-2.5"
                   >
                     <option value="COLD">COLD (Frio)</option>
                     <option value="WARM">WARM (Morno)</option>
@@ -1991,7 +1988,7 @@ export default function LeadsPage() {
                   <select
                     value={newLeadStage}
                     onChange={(e) => setNewLeadStage(e.target.value)}
-                    className="w-full bg-[#121214] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                    className="select-noir py-2.5"
                   >
                     {activeStages.map((s) => (
                       <option key={s.id} value={s.title}>{s.title}</option>
@@ -2004,7 +2001,7 @@ export default function LeadsPage() {
                   <select
                     value={newLeadAssignedUser}
                     onChange={(e) => setNewLeadAssignedUser(e.target.value)}
-                    className="w-full bg-[#121214] border border-white/10 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all text-zinc-200"
+                    className="select-noir py-2.5"
                   >
                     <option value="">Atribuir a mim</option>
                     {organizationUsers.map((u) => (
@@ -2018,14 +2015,14 @@ export default function LeadsPage() {
                 <button
                   type="button"
                   onClick={() => setIsCreateLeadModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors text-sm font-semibold cursor-pointer"
+                   className="btn-noir-secondary flex-1 py-2.5 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingLead}
-                  className="flex-1 py-2.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition-colors text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="btn-noir flex-1 rounded-lg py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmittingLead ? "Criando Lead..." : "Criar Lead"}
                 </button>

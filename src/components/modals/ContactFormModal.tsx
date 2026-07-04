@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, X, User } from "lucide-react";
+import { Loader2, User } from "lucide-react";
 import { createContact, updateContact, type ContactData, type ProductData } from "@/actions/crm";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
 
-const inputClass = "w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50";
+const inputClass = "input-noir";
 
 export function ContactFormModal({
   isOpen,
@@ -92,21 +93,37 @@ export function ContactFormModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-indigo-500/10">
-          <div>
-            <h3 className="font-bold text-lg flex items-center gap-2 text-indigo-400">
-              <User className="w-5 h-5" /> {isEditing ? "Editar Contato" : "Novo Contato"}
-            </h3>
-            <p className="text-xs text-zinc-500 mt-1">{isEditing ? "Atualize os dados do contato." : "Adicione um novo contato à base."}</p>
-          </div>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:bg-white/5 hover:text-white rounded-lg transition-colors">
-            <X className="w-5 h-5" />
+    <Modal
+      onClose={onClose}
+      title={isEditing ? "Editar Contato" : "Novo Contato"}
+      description={isEditing ? "Atualize os dados do contato." : "Adicione um novo contato a base."}
+      icon={<User className="h-5 w-5 text-indigo-400" />}
+      maxWidth="max-w-2xl"
+      closeDisabled={isSubmitting}
+      headerClassName="bg-indigo-500/10 p-6"
+      contentClassName="space-y-4 p-6"
+      footer={(
+        <>
+          <button onClick={onClose} disabled={isSubmitting} className="btn-noir-secondary px-5 py-2.5">
+            Cancelar
           </button>
-        </div>
-
-        <div className="p-6 space-y-4 overflow-y-auto">
+          <button
+            onClick={() => void handleSubmit()}
+            disabled={isSubmitting}
+            className="flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:opacity-60"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Salvando...
+              </>
+            ) : (
+              isEditing ? "Atualizar" : "Criar Contato"
+            )}
+          </button>
+        </>
+      )}
+    >
           {error && (
             <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
               {error}
@@ -194,35 +211,9 @@ export function ContactFormModal({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Anotações sobre o contato..."
-              className="w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50 min-h-[80px] resize-none"
+              className="input-noir min-h-[80px] resize-none"
             />
           </div>
-        </div>
-
-        <div className="p-6 border-t border-white/5 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors disabled:opacity-60"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => void handleSubmit()}
-            disabled={isSubmitting}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-indigo-500 text-white hover:bg-indigo-600 transition-colors flex items-center gap-2 disabled:opacity-60"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Salvando...
-              </>
-            ) : (
-              isEditing ? "Atualizar" : "Criar Contato"
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { getDashboardData, getUpcomingMeetings, type DashboardData } from "@/actions/crm";
 import { getHomePage } from "@/lib/nav-order";
+import { temperatureBadgeClasses } from "@/components/ui/noir";
 
 type DashboardUser = {
   id: string;
@@ -42,11 +43,7 @@ type DashboardClientProps = {
   users: DashboardUser[];
 };
 
-const tempColors = {
-  hot: "text-rose-400 bg-rose-500/10 border-rose-500/20",
-  warm: "text-amber-500 bg-amber-500/10 border-amber-500/20",
-  cold: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
-};
+const tempColors = temperatureBadgeClasses;
 
 export function DashboardClient({ initialData, initialMeetings, users }: DashboardClientProps) {
   const router = useRouter();
@@ -122,12 +119,12 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
       <div className="p-8 max-w-7xl mx-auto space-y-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white uppercase tracking-wider">Dashboard</h1>
+            <h1 className="heading-page">Dashboard</h1>
             <p className="label-mono mt-2">Visão geral da sua operação comercial</p>
           </div>
 
           {users.length > 1 && (
-            <div className="flex items-center gap-3 bg-[#09090b] p-3 rounded border border-zinc-900">
+            <div className="surface-noir flex items-center gap-3 p-3">
               <div className="flex items-center gap-2 text-zinc-400">
                 <Filter className="w-4 h-4" />
                 <span className="text-[10px] uppercase font-bold tracking-wider">Filtros:</span>
@@ -135,7 +132,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
               <select
                 value={filterUserId}
                 onChange={(event) => setFilterUserId(event.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none"
+                className="select-noir w-auto px-2 py-1 text-xs"
               >
                 <option value="">Toda a Organização</option>
                 {users.map((user) => (
@@ -146,7 +143,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
                 type="month"
                 value={filterMonth}
                 onChange={(event) => setFilterMonth(event.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none"
+                className="select-noir w-auto px-2 py-1 text-xs"
               />
             </div>
           )}
@@ -156,7 +153,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
           {kpis.map((kpi) => (
             <div
               key={kpi.label}
-              className="bg-[#09090b] border border-zinc-900 rounded p-5 space-y-3 hover:border-zinc-700/80 transition-all"
+              className="surface-noir p-5 space-y-3 hover:border-zinc-700/80 transition-all"
             >
               <div className="flex items-center justify-between">
                 <kpi.icon className="w-4 h-4 text-zinc-500" />
@@ -176,7 +173,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-[#09090b] border border-zinc-900 rounded">
+            <div className="surface-noir">
               <div className="p-5 border-b border-zinc-900 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CalendarIcon className="w-4 h-4 text-indigo-400" />
@@ -215,7 +212,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
               </div>
             </div>
 
-            <div className="bg-[#09090b] border border-zinc-900 rounded">
+            <div className="surface-noir">
               <div className="p-5 border-b border-zinc-900 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-500" />
@@ -247,7 +244,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
             </div>
           </div>
 
-          <div className="bg-[#09090b] border border-zinc-900 rounded">
+          <div className="surface-noir">
             <div className="p-5 border-b border-zinc-900">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-zinc-500" />
@@ -272,7 +269,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
             </div>
           </div>
 
-          <div className="bg-[#09090b] border border-zinc-900 rounded lg:col-span-3">
+          <div className="surface-noir lg:col-span-3">
             <div className="p-5 border-b border-zinc-900">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-zinc-500" />
@@ -304,7 +301,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
           </div>
         </div>
 
-        <div className="bg-[#09090b] border border-zinc-900 rounded">
+        <div className="surface-noir">
           <div className="p-5 border-b border-zinc-900 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-amber-500" />

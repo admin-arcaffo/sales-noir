@@ -91,6 +91,8 @@ import {
 } from "@/actions/crm";
 import type { AnalysisResponse } from "@/lib/ai/prompts";
 import { useToast } from "@/components/ui/Toast";
+import { Modal } from "@/components/ui/Modal";
+import { temperatureDotClasses } from "@/components/ui/noir";
 import { useFloatingChat } from "@/context/FloatingChatContext";
 import { CHAT_CACHE_INVALIDATED_EVENT, clearChatCache } from "@/lib/chat-cache";
 
@@ -101,11 +103,7 @@ const TaskModal = lazy(() => import("@/app/(app)/_components/TaskModal").then((m
 const ClosedDealModal = lazy(() => import("@/components/modals/ClosedDealModal").then((module) => ({ default: module.ClosedDealModal })));
 const InviteMasterclassModal = lazy(() => import("@/components/modals/InviteMasterclassModal").then((module) => ({ default: module.InviteMasterclassModal })));
 
-const STATUS_COLORS = {
-  hot: "bg-amber-500",
-  warm: "bg-yellow-400",
-  cold: "bg-blue-500",
-};
+const STATUS_COLORS = temperatureDotClasses;
 
 const LEGACY_STAGE_LABELS: Record<string, string> = {
   PRIMEIRO_CONTATO: "Primeiro Contato",
@@ -1930,7 +1928,7 @@ export default function ConversationsPage() {
   return (
     <div className="flex h-full bg-background text-foreground overflow-hidden font-sans">
       <section 
-        className={`border-r border-border/60 bg-[#0a0a0c] flex-col shrink-0 transition-all duration-300 relative ${
+        className={`relative flex-col shrink-0 border-r border-white/5 bg-[#0a0a0c] transition-all duration-300 ${
           selectedConvo ? "hidden md:flex" : "flex w-full md:w-[380px]"
         } ${isSidebarCollapsed ? "md:w-16" : "md:w-[380px]"}`}
       >
@@ -1944,7 +1942,7 @@ export default function ConversationsPage() {
         )}
 
         {/* Sidebar Header */}
-        <div className={`p-4 border-b border-zinc-900 bg-[#09090b] sticky top-0 z-10 flex ${isSidebarCollapsed ? "flex-col items-center justify-center gap-3" : "items-center justify-between"}`}>
+        <div className={`sticky top-0 z-10 flex border-b border-white/5 bg-white/[0.02] p-4 ${isSidebarCollapsed ? "flex-col items-center justify-center gap-3" : "items-center justify-between"}`}>
           {!isSidebarCollapsed && (
             <div className="flex items-center gap-2">
               <h1 className="text-xs font-bold text-white uppercase tracking-wider">
@@ -1958,7 +1956,7 @@ export default function ConversationsPage() {
               disabled={isSyncing || connectionStatus !== "CONNECTED"}
               title="Sincronizar mensagens pendentes"
               className={`p-2 rounded transition-colors flex items-center justify-center ${
-                connectionStatus !== "CONNECTED" ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300"
+                connectionStatus !== "CONNECTED" ? "bg-white/5 text-zinc-600 cursor-not-allowed" : "bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300"
               }`}
             >
               <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin text-zinc-400" : ""}`} />
@@ -1966,7 +1964,7 @@ export default function ConversationsPage() {
           </div>
         </div>
         
-        <div className={`p-4 border-b border-zinc-900 ${isSidebarCollapsed ? "flex flex-col items-center" : ""}`}>
+        <div className={`border-b border-white/5 p-4 ${isSidebarCollapsed ? "flex flex-col items-center" : ""}`}>
           <div className="flex items-center justify-between mb-3 w-full">
             {!isSidebarCollapsed && <h2 className="label-mono">Inbox</h2>}
             <button 
@@ -1988,14 +1986,14 @@ export default function ConversationsPage() {
                     value={searchTerm}
                     onChange={(event) => setSearchTerm(event.target.value)}
                     placeholder="Buscar..."
-                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500 transition-all placeholder:text-zinc-600"
+                    className="input-noir py-2 pl-9 pr-4"
                   />
                 </div>
                   <button
                     onClick={() => setIsFilterExpanded(!isFilterExpanded)}
                     className={`p-2 rounded-lg border hover:bg-white/10 transition-colors relative ${
                       isFilterExpanded || (filterUnreadOnly || filterStage !== "all" || filterProduct !== "all" || selectedConnectionId)
-                        ? "bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
+                        ? "bg-white/10 border-white/20 text-white hover:bg-white/15"
                         : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
                     }`}
                     title="Filtros Inteligentes"
@@ -2007,7 +2005,7 @@ export default function ConversationsPage() {
                 </button>
                 <button
                   onClick={() => setIsNewChatModalOpen(true)}
-                  className="p-2 rounded-lg bg-zinc-100 hover:bg-white text-black font-semibold transition-all shadow shrink-0"
+                  className="p-2 rounded-lg bg-white hover:bg-zinc-200 text-black font-semibold transition-all shadow shrink-0"
                   title="Nova Conversa"
                 >
                   <UserPlus className="w-4 h-4" />
@@ -2022,7 +2020,7 @@ export default function ConversationsPage() {
               </div>
 
               {isFilterExpanded && (
-                <div className="mt-1 p-3 bg-white/[0.02] border border-white/5 rounded-lg space-y-3 transition-all duration-200">
+                <div className="surface-noir-muted mt-1 space-y-3 p-3 transition-all duration-200">
                   <div className="flex items-center justify-between text-xs text-zinc-400">
                     <span className="font-semibold uppercase tracking-wider text-[9px] text-zinc-500">Filtros Inteligentes</span>
                     {(filterUnreadOnly || filterStage !== "all" || filterProduct !== "all" || selectedConnectionId || !assignedToMe) && (
@@ -2047,13 +2045,13 @@ export default function ConversationsPage() {
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => { setAssignedToMe(true); lastSyncTimeRef.current = null; }}
-                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${assignedToMe ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
+                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${assignedToMe ? 'bg-white text-black border border-white' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
                       >
                         Meus leads
                       </button>
                       <button
                         onClick={() => { setAssignedToMe(false); lastSyncTimeRef.current = null; }}
-                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${!assignedToMe ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
+                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${!assignedToMe ? 'bg-white text-black border border-white' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
                       >
                         Todos
                       </button>
@@ -2069,7 +2067,7 @@ export default function ConversationsPage() {
                           setSelectedConnectionId(e.target.value);
                           lastSyncTimeRef.current = null;
                         }}
-                        className="w-full bg-[#0a0a0c] border border-white/10 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+                        className="select-noir py-1 text-xs"
                       >
                         <option value="">Todas as conexões</option>
                         {availableConnections.map((conn) => (
@@ -2085,7 +2083,7 @@ export default function ConversationsPage() {
                       <select
                         value={filterStage}
                         onChange={(e) => setFilterStage(e.target.value)}
-                        className="w-full bg-[#0a0a0c] border border-white/10 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+                        className="select-noir py-1 text-xs"
                       >
                         <option value="all">Todos</option>
                         {pipelineStages.map((stage) => (
@@ -2099,7 +2097,7 @@ export default function ConversationsPage() {
                       <select
                         value={filterProduct}
                         onChange={(e) => setFilterProduct(e.target.value)}
-                        className="w-full bg-[#0a0a0c] border border-white/10 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+                        className="select-noir py-1 text-xs"
                       >
                         <option value="all">Todos</option>
                         <option value="none">Sem Produto</option>
@@ -2161,11 +2159,11 @@ export default function ConversationsPage() {
                 className={`cursor-pointer transition-all duration-200 group relative ${
                   isSidebarCollapsed ? "p-3 flex justify-center" : "p-3 border-b border-zinc-900"
                 } ${
-                  selectedConvo === convo.id 
-                    ? "bg-zinc-900 border-l-2 border-l-zinc-400" 
-                    : getUnreadCount(convo) > 0 
-                      ? "bg-sky-500/[0.04] border-l-2 border-l-sky-500 hover:bg-sky-500/10"
-                      : "hover:bg-zinc-900/40 border-l-2 border-l-transparent"
+                  selectedConvo === convo.id
+                    ? "bg-white/[0.08]"
+                    : getUnreadCount(convo) > 0
+                      ? "bg-sky-500/[0.04] hover:bg-sky-500/10"
+                      : "hover:bg-white/[0.04]"
                 }`}
               >
                 {isSidebarCollapsed ? (
@@ -2240,7 +2238,7 @@ export default function ConversationsPage() {
         )}
         {activeConvo ? (
           <>
-            <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-4 md:px-6 bg-[#09090b] shrink-0 z-10">
+            <header className="z-10 flex h-14 shrink-0 items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 md:px-6">
               <div className="flex items-center gap-2 md:gap-3 min-w-0">
                 {/* Back button on mobile */}
                 <button
@@ -2282,7 +2280,7 @@ export default function ConversationsPage() {
                             setIsEditingContactName(true);
                             setIsContactProfileModalOpen(true);
                           }}
-                          className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-extrabold uppercase bg-zinc-100 hover:bg-white text-black rounded-md transition-all shrink-0 active:scale-95 shadow-sm"
+                          className="flex shrink-0 items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[9px] font-extrabold uppercase text-black shadow-sm transition-all hover:bg-zinc-200 active:scale-95"
                           title="Salvar Contato no CRM"
                         >
                           <UserPlus className="w-2.5 h-2.5" />
@@ -2311,7 +2309,7 @@ export default function ConversationsPage() {
                         console.error(err);
                       }
                     }}
-                    className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-zinc-100 text-black text-xs font-semibold rounded-md hover:bg-white transition-colors"
+                    className="flex items-center gap-1.5 rounded-md bg-white px-2 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-zinc-200 md:px-3"
                     title="Qualificar Lead"
                   >
                     <Target className="w-3.5 h-3.5" />
@@ -2320,7 +2318,7 @@ export default function ConversationsPage() {
                 )}
                 <button
                   onClick={() => openTaskModal()}
-                  className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 md:px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                  className="btn-noir-secondary flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs md:px-3"
                   title="Criar tarefa para este lead"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
@@ -2328,7 +2326,7 @@ export default function ConversationsPage() {
                 </button>
                 <button
                   onClick={() => setIsShareContactModalOpen(true)}
-                  className="hidden sm:block p-1.5 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded transition-colors"
+                  className="hidden rounded p-1.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white sm:block"
                   title="Compartilhar este contato"
                 >
                   <Share2 className="w-4 h-4" />
@@ -2351,7 +2349,7 @@ export default function ConversationsPage() {
                   <Trash2 className="w-4 h-4" />
                 </button>
                 <button 
-                  className="md:hidden p-1.5 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded transition-colors"
+                  className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white md:hidden"
                   onClick={() => setIsAnalysisCollapsed(!isAnalysisCollapsed)}
                   title="Painel de IA"
                 >
@@ -2412,7 +2410,7 @@ export default function ConversationsPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            <footer className="p-3 bg-[#0a0a0c] border-t border-border/40 shrink-0 space-y-2 relative">
+            <footer className="relative shrink-0 space-y-2 border-t border-white/5 bg-white/[0.02] p-3">
               {isSending && uploadProgress > 0 && uploadProgress <= 100 && (
                 <div className="absolute top-0 left-0 w-full h-1 bg-zinc-800 z-50">
                   <div 
@@ -2449,7 +2447,7 @@ export default function ConversationsPage() {
                   </button>
                   <button 
                     onClick={() => stopRecording(false)}
-                    className="flex items-center gap-2 bg-zinc-100 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-white transition-colors shadow-lg"
+                    className="flex items-center gap-2 rounded-lg bg-white px-4 py-1.5 text-xs font-bold text-black shadow-lg transition-colors hover:bg-zinc-200"
                   >
                     <Check className="w-4 h-4" /> Enviar
                   </button>
@@ -2467,12 +2465,12 @@ export default function ConversationsPage() {
                     <textarea
                       value={editingMsg.text}
                       onChange={(e) => setEditingMsg({ ...editingMsg, text: e.target.value })}
-                      className="flex-1 bg-transparent border-none focus:ring-0 text-sm resize-none"
+                      className="input-noir min-h-[60px] flex-1 resize-none border-none bg-transparent p-0 text-sm focus:border-transparent"
                       rows={2}
                     />
                     <button 
                       onClick={handleUpdateMessage}
-                      className="bg-zinc-100 text-black p-2 rounded-lg hover:bg-white"
+                      className="rounded-lg bg-white p-2 text-black hover:bg-zinc-200"
                     >
                       <Check className="w-4 h-4" />
                     </button>
@@ -2484,28 +2482,28 @@ export default function ConversationsPage() {
                   <div className="relative md:hidden">
                     <button
                       onClick={() => setShowMobileActions(!showMobileActions)}
-                      className={`p-2 rounded-full transition-colors ${showMobileActions ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white"}`}
+                      className={`rounded-full p-2 transition-colors ${showMobileActions ? "bg-white/10 text-white" : "text-zinc-500 hover:text-white"}`}
                     >
                       <Plus className={`w-5 h-5 transition-transform ${showMobileActions ? "rotate-45" : ""}`} />
                     </button>
                     {/* Mobile Submenu Popover */}
                     {showMobileActions && (
-                      <div className="absolute bottom-full left-0 mb-2 w-max bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 p-1 flex flex-col gap-1">
+                      <div className="surface-noir absolute bottom-full left-0 z-50 mb-2 flex w-max flex-col gap-1 p-1 shadow-xl">
                         <button 
                           onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowMobileActions(false); }}
-                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                           className="flex items-center gap-2 rounded-md p-2 px-3 text-sm text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
                         >
                           <Smile className="w-4 h-4" /> Emoji
                         </button>
                         <button 
                           onClick={() => { setIsQuickRepliesModalOpen(true); setShowMobileActions(false); }}
-                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-amber-400 hover:bg-zinc-800 rounded-md transition-colors"
+                           className="flex items-center gap-2 rounded-md p-2 px-3 text-sm text-zinc-300 transition-colors hover:bg-white/5 hover:text-amber-400"
                         >
                           <Zap className="w-4 h-4" /> Respostas Rápidas
                         </button>
                         <button 
                           onClick={() => { fileInputRef.current?.click(); setShowMobileActions(false); }}
-                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                           className="flex items-center gap-2 rounded-md p-2 px-3 text-sm text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
                         >
                           <Paperclip className="w-4 h-4" /> Anexo
                         </button>
@@ -2550,7 +2548,7 @@ export default function ConversationsPage() {
                     {showQuickReplyDropdown && filteredQuickReplies.length > 0 && (
                       <div 
                         ref={quickReplyDropdownRef}
-                        className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 py-1"
+                        className="surface-noir absolute bottom-full left-0 z-50 mb-2 max-h-64 w-72 overflow-y-auto py-1 shadow-xl"
                       >
                         {filteredQuickReplies.map((qr, idx) => (
                           <div
@@ -2565,7 +2563,7 @@ export default function ConversationsPage() {
                               textareaRef.current?.focus();
                             }}
                             className={`px-3 py-2 cursor-pointer transition-colors ${
-                              idx === activeQuickReplyIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+                              idx === activeQuickReplyIndex ? 'bg-white/10' : 'hover:bg-white/5'
                             }`}
                           >
                             <div className="flex items-center gap-2 mb-0.5">
@@ -2638,7 +2636,7 @@ export default function ConversationsPage() {
                           handleSendMessage();
                         }
                       }}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all resize-none overflow-y-auto min-h-[44px] max-h-[160px]"
+                      className="input-noir max-h-[160px] min-h-[44px] resize-none overflow-y-auto rounded-xl px-4 py-2.5"
                       rows={1}
                     />
                   </div>
@@ -2653,7 +2651,7 @@ export default function ConversationsPage() {
                   <button 
                     onClick={handleSendMessage}
                     disabled={!draftMessage.trim() || isSending}
-                    className="p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white disabled:opacity-50 disabled:hover:bg-zinc-100 transition-all shadow-lg"
+                    className="rounded-xl bg-white p-2.5 text-black shadow-lg transition-all hover:bg-zinc-200 disabled:opacity-50 disabled:hover:bg-white"
                   >
                     <Send className="w-5 h-5" />
                   </button>
@@ -2662,7 +2660,7 @@ export default function ConversationsPage() {
             </footer>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 bg-[#0a0a0c] p-6 relative overflow-hidden">
+          <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-background p-6 text-zinc-600">
             {/* Background elements */}
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(245,158,11,0.03)_0%,transparent_70%)] pointer-events-none" />
             
@@ -2696,9 +2694,9 @@ export default function ConversationsPage() {
               </div>
 
               <div className="flex gap-3 justify-center pt-4">
-                <button 
+                <button
                   onClick={() => setIsNewChatModalOpen(true)}
-                  className="px-6 py-3 bg-zinc-100 hover:bg-white text-black font-semibold rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95"
+                  className="flex items-center gap-2 rounded-xl bg-white px-6 py-3 font-semibold text-black shadow-lg transition-all hover:bg-zinc-200 active:scale-95"
                 >
                   <UserPlus className="w-4 h-4" />
                   Iniciar Nova Conversa
@@ -2711,13 +2709,13 @@ export default function ConversationsPage() {
       </main>
 
       <section 
-        className={`bg-[#0a0a0c] flex flex-col shrink-0 transition-all duration-300 z-20 ${
+        className={`z-20 flex shrink-0 flex-col bg-[#0a0a0c] transition-all duration-300 ${
           isAnalysisCollapsed 
-            ? "w-0 md:w-12 overflow-hidden md:border-l border-white/[0.06] " 
-            : "fixed inset-y-0 right-0 w-full md:relative md:w-[420px] z-40 border-l border-white/10 md:border-white/[0.06] shadow-2xl md:shadow-none"
+            ? "w-0 overflow-hidden border-white/5 md:w-12 md:border-l "
+            : "fixed inset-y-0 right-0 z-40 w-full border-l border-white/10 shadow-2xl md:relative md:w-[420px] md:border-white/5 md:shadow-none"
         }`}
       >
-        <div className={`p-5 border-b border-white/[0.06] flex items-center ${isAnalysisCollapsed ? "justify-center" : "justify-between"}`}>
+        <div className={`flex items-center border-b border-white/5 bg-white/[0.02] p-5 ${isAnalysisCollapsed ? "justify-center" : "justify-between"}`}>
           {!isAnalysisCollapsed ? (
             <div>
               <div className="flex items-center gap-2 mb-0.5">
@@ -2737,28 +2735,28 @@ export default function ConversationsPage() {
 
         {activeConvo && !isAnalysisCollapsed ? (
           <div className="flex flex-col h-full overflow-hidden">
-            <div className="flex border-b border-white/[0.06] p-2 gap-1 bg-[#0a0a0c] shrink-0">
+            <div className="flex shrink-0 gap-1 border-b border-white/5 bg-white/[0.02] p-2">
               <button 
                 onClick={() => setTacticalTab("lead")}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "lead" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "lead" ? "bg-white text-black" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
               >
                 Lead
               </button>
               <button 
                 onClick={() => setTacticalTab("ia")}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "ia" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "ia" ? "bg-white text-black" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
               >
                 Análise IA
               </button>
               <button 
                 onClick={() => setTacticalTab("tasks")}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "tasks" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "tasks" ? "bg-white text-black" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
               >
                 Tarefas
               </button>
               <button 
                 onClick={() => setTacticalTab("acoes")}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "acoes" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "acoes" ? "bg-white text-black" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
               >
                 Ações
               </button>
@@ -2767,7 +2765,7 @@ export default function ConversationsPage() {
             <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
               {tacticalTab === "lead" && (
                 <div className="space-y-5">
-                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 space-y-3">
+                  <div className="surface-noir-muted p-4 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <SectionTitle>Resumo comercial</SectionTitle>
@@ -2784,14 +2782,14 @@ export default function ConversationsPage() {
                     </div>
                     <div className="space-y-2 text-[11px] text-zinc-500">
                       {/* Empresa */}
-                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                        <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
                         <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Empresa</span>
                         {isEditingCompany ? (
                           <div className="mt-1 flex items-center gap-2">
                             <input
                               autoFocus
                               type="text"
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              className="input-noir py-1 text-xs"
                               value={editedCompanyValue}
                               onChange={e => setEditedCompanyValue(e.target.value)}
                               onKeyDown={e => {
@@ -2824,14 +2822,14 @@ export default function ConversationsPage() {
                       </div>
 
                       {/* Email */}
-                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                      <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
                         <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">E-mail</span>
                         {isEditingEmail ? (
                           <div className="mt-1 flex items-center gap-2">
                             <input
                               autoFocus
                               type="email"
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              className="input-noir py-1 text-xs"
                               value={editedEmailValue}
                               onChange={e => setEditedEmailValue(e.target.value)}
                               onKeyDown={e => {
@@ -2864,14 +2862,14 @@ export default function ConversationsPage() {
                       </div>
 
                       {/* Area de Interesse */}
-                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                      <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
                         <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Área de Interesse</span>
                         {isEditingInterestArea ? (
                           <div className="mt-1 flex items-center gap-2">
                             <input
                               autoFocus
                               type="text"
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              className="input-noir py-1 text-xs"
                               value={editedInterestAreaValue}
                               onChange={e => setEditedInterestAreaValue(e.target.value)}
                               onKeyDown={e => {
@@ -2933,7 +2931,7 @@ export default function ConversationsPage() {
                       <select
                         value={draftStage}
                         onChange={(event) => setDraftStage(event.target.value)}
-                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                        className="select-noir flex-1"
                       >
                         {pipelineStages.map((stage) => (
                           <option key={stage.id} value={stage.name}>
@@ -2949,7 +2947,7 @@ export default function ConversationsPage() {
                       <button
                         onClick={() => void handleSaveStage()}
                         disabled={isSavingStage || draftStage === activeConvo.stageKey}
-                        className="px-3 py-2 bg-zinc-100 text-black rounded-lg text-sm font-semibold hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
+                        className="flex cursor-pointer items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-black hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Save className="w-4 h-4" />
                         {isSavingStage ? "Salvando" : "Salvar"}
@@ -2979,7 +2977,7 @@ export default function ConversationsPage() {
                       value={draftOrigin}
                       disabled={isSavingOrigin}
                       onChange={(e) => handleSaveOrigin(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                      className="select-noir"
                     >
                       <option value="">Não informado</option>
                       {leadOrigins.map((o) => (
@@ -3008,7 +3006,7 @@ export default function ConversationsPage() {
                       value={notesDraft}
                       onChange={(e) => setNotesDraft(e.target.value)}
                       placeholder="Registre insights, dores ou observações sobre o lead..."
-                      className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg p-3 text-sm text-zinc-400 min-h-28 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-white/10 placeholder:text-zinc-700 resize-none transition-all"
+                      className="input-noir min-h-28 resize-none rounded-lg bg-white/[0.02] p-3 text-zinc-400 placeholder:text-zinc-700"
                     />
                   </div>
                 </div>
@@ -3061,7 +3059,7 @@ export default function ConversationsPage() {
                 <div className="space-y-4">
                   <button
                     onClick={() => openTaskModal()}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2 text-xs font-bold text-black transition-colors hover:bg-emerald-400"
+                    className="btn-noir flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs"
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     Nova tarefa para este lead
@@ -3101,7 +3099,7 @@ export default function ConversationsPage() {
                     <SectionTitle>Próxima ação</SectionTitle>
                     <button
                       onClick={() => openTaskModal()}
-                      className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors border border-emerald-500/20 cursor-pointer"
+                      className="btn-noir-secondary flex w-full cursor-pointer items-center justify-center gap-2 py-2 text-xs"
                     >
                       <CheckCircle2 className="w-4 h-4" />
                       Criar tarefa vinculada ao lead
@@ -3112,7 +3110,7 @@ export default function ConversationsPage() {
                     <SectionTitle>Reunião</SectionTitle>
                     <button
                       onClick={() => setMeetingModalOpen(true)}
-                      className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-500/20 cursor-pointer"
+                      className="btn-noir-secondary flex w-full cursor-pointer items-center justify-center gap-2 py-2 text-xs"
                     >
                       <Calendar className="w-4 h-4" />
                       Agendar Reunião
@@ -3123,7 +3121,7 @@ export default function ConversationsPage() {
                     <SectionTitle>Eventos</SectionTitle>
                     <button
                       onClick={() => setInviteMasterclassLeadId(activeConvo.contactId)}
-                      className="w-full py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/20 cursor-pointer"
+                      className="btn-noir-secondary flex w-full cursor-pointer items-center justify-center gap-2 py-2 text-xs"
                     >
                       <Sparkles className="w-4 h-4" />
                       Convidar para MASTERCLASS
@@ -3132,12 +3130,12 @@ export default function ConversationsPage() {
 
                   <div className="space-y-2">
                     <SectionTitle>Agendamento de Mensagens</SectionTitle>
-                    <div className="p-3 bg-white/[0.02] border border-white/5 rounded-lg space-y-4">
+                    <div className="surface-noir-muted p-3 space-y-4">
                       <p className="text-[10px] text-zinc-500">
                         Escolha a data e a hora globais. Você pode agendar várias mensagens para enviar em sequência a partir desse horário.
                       </p>
 
-                      <div className="flex flex-col gap-2 bg-[#0c0c0e] p-3 rounded-lg border border-white/5">
+                      <div className="surface-noir flex flex-col gap-2 p-3">
                         <label className="text-[9px] uppercase font-bold tracking-wider text-sky-500 block">
                           Data e Hora do Disparo Inicial
                         </label>
@@ -3146,13 +3144,13 @@ export default function ConversationsPage() {
                             type="date"
                             value={scheduleGlobalDate}
                             onChange={(e) => setScheduleGlobalDate(e.target.value)}
-                            className="flex-1 bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                            className="input-noir flex-1 py-1.5 text-xs"
                           />
                           <input
                             type="time"
                             value={scheduleGlobalTime}
                             onChange={(e) => setScheduleGlobalTime(e.target.value)}
-                            className="w-[100px] bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                            className="input-noir w-[100px] py-1.5 text-xs"
                           />
                         </div>
                       </div>
@@ -3183,7 +3181,7 @@ export default function ConversationsPage() {
                                 setScheduledMessages(newItems);
                               }}
                               placeholder="Escreva a mensagem..."
-                              className="w-full bg-[#0a0a0c] border border-white/10 rounded p-2 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-[60px] resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                              className="input-noir min-h-[60px] resize-none p-2 text-xs placeholder:text-zinc-700"
                             />
                           </div>
                         ))}
@@ -3202,7 +3200,7 @@ export default function ConversationsPage() {
                           <label className="text-[9px] uppercase font-bold tracking-wider text-emerald-500 block mb-2">Mensagens Pendentes ({pendingSchedules.length})</label>
                           <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
                             {pendingSchedules.map((schedule) => (
-                              <div key={schedule.id} className="p-2 bg-black/20 rounded border border-white/5 flex flex-col gap-1.5">
+                              <div key={schedule.id} className="flex flex-col gap-1.5 rounded border border-white/5 bg-white/[0.03] p-2">
                                 <p className="text-[10px] text-zinc-300 line-clamp-2">{schedule.content}</p>
                                 <div className="flex items-center justify-between">
                                   <span className="text-[9px] text-zinc-500">
@@ -3225,7 +3223,7 @@ export default function ConversationsPage() {
                         type="button"
                         onClick={() => void handleSaveSchedule()}
                         disabled={isSavingSchedule || !scheduleGlobalDate || !scheduleGlobalTime || scheduledMessages.every(i => !i.content)}
-                        className="w-full py-2 bg-zinc-100 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
+                        className="btn-noir mt-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Save className="w-3.5 h-3.5" />
                         {isSavingSchedule ? "Salvando..." : "Salvar Agendamento"}
@@ -3244,13 +3242,13 @@ export default function ConversationsPage() {
                     value={sellerContext}
                     onChange={(e) => setSellerContext(e.target.value)}
                     placeholder="Qual a situação atual do lead para eu ajudar? (Opcional)"
-                    className="w-full bg-[#0a0a0c] border border-white/10 rounded-lg p-2.5 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-16 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600 transition-all"
+                    className="input-noir min-h-16 resize-none rounded-lg p-2.5 text-xs text-zinc-300 placeholder:text-zinc-700"
                   />
                 </div>
                 <button
                   onClick={() => void handleAnalyze()}
                   disabled={!selectedConvo || isAnalyzing}
-                  className="w-full py-3 px-4 bg-zinc-100 hover:bg-white text-black rounded-lg font-semibold text-sm transition-all shadow-[0_0_20px_rgba(255,255,255,0.06)] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98]"
+                  className="btn-noir flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-30"
                 >
                   <Zap className="w-4 h-4" />
                   {isAnalyzing ? "Processando..." : "Analisar Negociação"}
@@ -3273,7 +3271,7 @@ export default function ConversationsPage() {
       {/* Floating UI: Context Menu */}
       {contextMenu && (
         <div 
-          className="fixed z-[100] bg-[#18181b] border border-white/10 rounded-xl shadow-2xl py-1 min-w-[160px] overflow-hidden animate-in fade-in zoom-in duration-100"
+          className="surface-noir fixed z-[100] min-w-[160px] overflow-hidden py-1 shadow-2xl animate-in fade-in zoom-in duration-100"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -3314,7 +3312,7 @@ export default function ConversationsPage() {
 
       {/* Floating Top Bar for Forward Mode */}
       {forwardMode && (
-        <div className="fixed top-0 left-0 right-0 z-[150] bg-zinc-900 border-b border-white/10 p-4 flex items-center justify-between shadow-xl animate-in slide-in-from-top-full duration-200">
+        <div className="fixed top-0 left-0 right-0 z-[150] border-b border-white/10 bg-[#09090b] p-4 flex items-center justify-between shadow-xl animate-in slide-in-from-top-full duration-200">
           <div className="flex items-center gap-4">
             <button 
               onClick={() => { setForwardMode(false); setSelectedMsgIds(new Set()); }}
@@ -3327,7 +3325,7 @@ export default function ConversationsPage() {
           <button 
             onClick={() => setIsForwardModalOpen(true)}
             disabled={selectedMsgIds.size === 0}
-            className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+            className="btn-noir flex items-center gap-2 rounded-lg px-4 py-2 disabled:opacity-50"
           >
             Encaminhar <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
           </button>
@@ -3336,25 +3334,15 @@ export default function ConversationsPage() {
 
       {/* Forward Destination Modal */}
       {isForwardModalOpen && (
-        <div 
-          className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setIsForwardModalOpen(false)}
+        <Modal
+          onClose={() => setIsForwardModalOpen(false)}
+          title="Encaminhar para..."
+          icon={<ArrowRight className="h-5 w-5 text-zinc-400" />}
+          maxWidth="max-w-md"
+          overlayClassName="z-[200]"
+          contentClassName="flex flex-1 flex-col p-0"
         >
-          <div 
-            className="bg-[#18181b] border border-white/10 rounded-xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
-              <h3 className="font-semibold text-lg">Encaminhar para...</h3>
-              <button 
-                onClick={() => setIsForwardModalOpen(false)}
-                className="p-1 text-zinc-400 hover:text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-3 border-b border-white/5">
+            <div className="border-b border-white/5 p-3">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
                 <input 
@@ -3362,7 +3350,7 @@ export default function ConversationsPage() {
                   value={forwardQuery}
                   onChange={(e) => setForwardQuery(e.target.value)}
                   placeholder="Buscar conversa..."
-                  className="w-full bg-black/20 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-sky-500/50"
+                  className="input-noir py-2 pl-9 pr-4"
                   autoFocus
                 />
               </div>
@@ -3395,14 +3383,13 @@ export default function ConversationsPage() {
                 <div className="p-4 text-center text-sm text-zinc-500">Nenhuma conversa encontrada.</div>
               )}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Floating UI: Reaction Picker */}
       {reactionPicker && (
         <div 
-          className="fixed z-[100] bg-[#18181b] border border-white/10 rounded-full shadow-2xl px-2 py-1.5 flex gap-1 animate-in fade-in slide-in-from-bottom-2 duration-200"
+          className="surface-noir fixed z-[100] flex gap-1 rounded-full px-2 py-1.5 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200"
           style={{ 
             top: (document.getElementById(reactionPicker)?.getBoundingClientRect().top || 0) - 50,
             left: document.getElementById(reactionPicker)?.getBoundingClientRect().left
@@ -3430,218 +3417,210 @@ export default function ConversationsPage() {
 
       {/* Profile Modal */}
       {isProfileModalOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-white/5 flex items-center justify-between">
-              <h3 className="font-bold text-lg">Meu Perfil WhatsApp</h3>
-              <button onClick={() => setIsProfileModalOpen(false)} className="text-zinc-500 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal
+          onClose={() => setIsProfileModalOpen(false)}
+          title="Meu Perfil WhatsApp"
+          icon={<User className="h-5 w-5 text-zinc-400" />}
+          maxWidth="max-w-md"
+          overlayClassName="z-[200]"
+          contentClassName="space-y-6 p-8"
+          footer={(
+            <button
+              onClick={() => setIsProfileModalOpen(false)}
+              className="btn-noir rounded-xl px-6 py-2.5 text-sm"
+            >
+              Concluído
+            </button>
+          )}
+        >
+          {isProfileLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="w-10 h-10 border-2 border-zinc-800 border-t-white rounded-full animate-spin" />
+              <p className="text-sm text-zinc-500">Carregando dados do WhatsApp...</p>
             </div>
-            
-            <div className="p-8 space-y-6">
-              {isProfileLoading ? (
-                <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                  <div className="w-10 h-10 border-2 border-zinc-800 border-t-white rounded-full animate-spin" />
-                  <p className="text-sm text-zinc-500">Carregando dados do WhatsApp...</p>
-                </div>
-              ) : profileError ? (
-                <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
-                  <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20 text-red-500 mb-2">
-                    <X className="w-6 h-6" />
-                  </div>
-                  <h4 className="font-semibold text-sm text-zinc-300">Não foi possível carregar</h4>
-                  <p className="text-xs text-zinc-500 max-w-[280px]">{profileError}</p>
-                  <button 
-                    onClick={openMyProfile}
-                    className="mt-2 text-xs font-semibold px-4 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10 rounded-xl transition-all"
-                  >
-                    Tentar Novamente
-                  </button>
-                </div>
-              ) : myProfile ? (
-                <div className="space-y-6">
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="relative group">
-                      <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/10 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
-                        {myProfile.picture ? (
-                          <SafeAvatar src={myProfile.picture} alt="Profile" className="w-full h-full object-cover" />
-                        ) : myProfile.name?.substring(0, 1)}
-                      </div>
-                      <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
-                        <Paperclip className="w-6 h-6 text-white" />
-                        <input 
-                          type="file" 
-                          className="hidden" 
-                          accept="image/*"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onloadend = async () => {
-                                const base64 = (reader.result as string).split(',')[1];
-                                await updateWhatsAppProfile({ pictureBase64: base64 });
-                                openMyProfile(); // refresh
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-sm text-zinc-500 mb-1">Status da Instância</p>
-                      <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-full text-[10px] font-bold uppercase tracking-widest">
-                        Online
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest px-1">Nome no WhatsApp</label>
-                      <div className="flex gap-2">
-                        <input 
-                          type="text" 
-                          defaultValue={myProfile.name}
-                          onBlur={(e) => updateWhatsAppProfile({ name: e.target.value })}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest px-1">Recado (Status)</label>
-                      <textarea 
-                        defaultValue={myProfile.status}
-                        onBlur={(e) => updateWhatsAppProfile({ status: e.target.value })}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all resize-none"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
-                  <div className="w-12 h-12 rounded-full bg-zinc-800/80 flex items-center justify-center text-zinc-500 mb-2">
-                    <X className="w-6 h-6" />
-                  </div>
-                  <p className="text-xs text-zinc-500">WhatsApp desconectado ou indisponível.</p>
-                </div>
-              )}
-            </div>
-            
-            <div className="p-6 bg-white/[0.02] border-t border-white/5 flex justify-end">
-              <button 
-                onClick={() => setIsProfileModalOpen(false)}
-                className="px-6 py-2.5 bg-zinc-100 text-black rounded-xl text-sm font-bold hover:bg-white transition-all active:scale-95"
+          ) : profileError ? (
+            <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20 text-red-500 mb-2">
+                <X className="w-6 h-6" />
+              </div>
+              <h4 className="font-semibold text-sm text-zinc-300">Não foi possível carregar</h4>
+              <p className="text-xs text-zinc-500 max-w-[280px]">{profileError}</p>
+              <button
+                onClick={openMyProfile}
+                className="btn-noir-secondary mt-2 rounded-xl px-4 py-2 text-xs"
               >
-                Concluído
+                Tentar Novamente
               </button>
             </div>
-          </div>
-        </div>
+          ) : myProfile ? (
+            <div className="space-y-6">
+              <div className="flex flex-col items-center gap-4">
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/10 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
+                    {myProfile.picture ? (
+                      <SafeAvatar src={myProfile.picture} alt="Profile" className="w-full h-full object-cover" />
+                    ) : myProfile.name?.substring(0, 1)}
+                  </div>
+                  <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                    <Paperclip className="w-6 h-6 text-white" />
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = async () => {
+                            const base64 = (reader.result as string).split(',')[1];
+                            await updateWhatsAppProfile({ pictureBase64: base64 });
+                            openMyProfile(); // refresh
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="text-center">
+                  <p className="text-sm text-zinc-500 mb-1">Status da Instância</p>
+                  <span className="px-3 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-full text-[10px] font-bold uppercase tracking-widest">
+                    Online
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="label-field px-1">Nome no WhatsApp</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      defaultValue={myProfile.name}
+                      onBlur={(e) => updateWhatsAppProfile({ name: e.target.value })}
+                      className="input-noir flex-1 rounded-xl px-4 py-2.5"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="label-field px-1">Recado (Status)</label>
+                  <textarea
+                    defaultValue={myProfile.status}
+                    onBlur={(e) => updateWhatsAppProfile({ status: e.target.value })}
+                    className="input-noir resize-none rounded-xl px-4 py-2.5"
+                    rows={2}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
+              <div className="w-12 h-12 rounded-full bg-zinc-800/80 flex items-center justify-center text-zinc-500 mb-2">
+                <X className="w-6 h-6" />
+              </div>
+              <p className="text-xs text-zinc-500">WhatsApp desconectado ou indisponível.</p>
+            </div>
+          )}
+        </Modal>
       )}
 
       {/* Contact Profile Modal (Popup) */}
       {isContactProfileModalOpen && activeConvo && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0c0c0e] border border-white/10 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-white/5 flex items-center justify-between">
-              <h3 className="font-bold text-lg">Perfil do Contato</h3>
-              <button onClick={() => setIsContactProfileModalOpen(false)} className="text-zinc-500 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-8">
-              <div className="flex flex-col items-center text-center mb-8">
-                <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/5 mb-4 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
-                  {activeConvo.avatarUrl ? (
-                    <SafeAvatar src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
-                  ) : activeConvo.name.substring(0, 1)}
-                </div>
-                {isEditingContactName ? (
-                  <div className="flex items-center justify-center gap-2 mt-1 px-4 mb-2">
-                    <input 
-                      type="text"
-                      value={editedContactNameValue}
-                      onChange={(e) => setEditedContactNameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveContactName();
-                        if (e.key === 'Escape') setIsEditingContactName(false);
-                      }}
-                      className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-center font-semibold text-white focus:outline-none focus:border-sky-500/50 transition-all max-w-[200px]"
-                      autoFocus
-                    />
-                    <button 
-                      onClick={handleSaveContactName}
-                      className="p-2 bg-zinc-100 hover:bg-white text-black rounded-xl transition-all"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button 
-                      onClick={() => setIsEditingContactName(false)}
-                      className="p-2 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl transition-all"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <h2 
-                    onClick={() => {
-                      setEditedContactNameValue(activeConvo.name);
-                      setIsEditingContactName(true);
-                    }}
-                    className="text-xl font-bold text-white mb-1 flex items-center justify-center gap-2 cursor-pointer group hover:text-sky-500 transition-all"
-                    title="Clique para editar"
-                  >
-                    <span>{activeConvo.name}</span>
-                    <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-sky-500 transition-all" />
-                  </h2>
-                )}
-                <div className="flex items-center gap-1.5 text-zinc-500 text-sm">
-                  <Phone className="w-3.5 h-3.5" />
-                  <span>{activeConvo.phone}</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-8">
-                <MetaCard label="Empresa" value={activeConvo.company} />
-                <MetaCard label="Origem" value={activeConvo.origin || "Não informado"} />
-                <MetaCard label="Estágio" value={activeConvo.stage} />
-                <MetaCard label="Temperatura" value={activeConvo.status.toUpperCase()} />
-              </div>
-
-              <div className="space-y-4">
-                <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-                  <p className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-2">Anotações do CRM</p>
-                  <p className="text-sm text-zinc-400 italic leading-relaxed">
-                    {activeConvo.notes || "Nenhuma anotação registrada para este contato."}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 bg-white/[0.02] border-t border-white/5 flex justify-end gap-3">
-              <button 
+        <Modal
+          onClose={() => setIsContactProfileModalOpen(false)}
+          title="Perfil do Contato"
+          icon={<User className="h-5 w-5 text-zinc-400" />}
+          maxWidth="max-w-md"
+          overlayClassName="z-[200]"
+          contentClassName="p-8"
+          footer={(
+            <>
+              <button
                 onClick={() => setIsContactProfileModalOpen(false)}
-                className="px-6 py-2.5 bg-zinc-800 text-white rounded-xl text-sm font-bold hover:bg-zinc-700 transition-all active:scale-95"
+                className="btn-noir-secondary rounded-xl px-6 py-2.5 text-sm"
               >
                 Fechar
               </button>
-              <button 
+              <button
                 onClick={() => {
                   setIsContactProfileModalOpen(false);
                   setIsAnalysisCollapsed(false);
                 }}
-                className="px-6 py-2.5 bg-zinc-100 text-black rounded-xl text-sm font-bold hover:bg-white transition-all active:scale-95"
+                className="btn-noir rounded-xl px-6 py-2.5 text-sm"
               >
                 Ver Análise IA
               </button>
+            </>
+          )}
+        >
+          <div className="flex flex-col items-center text-center mb-8">
+            <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/5 mb-4 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
+              {activeConvo.avatarUrl ? (
+                <SafeAvatar src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
+              ) : activeConvo.name.substring(0, 1)}
+            </div>
+            {isEditingContactName ? (
+              <div className="flex items-center justify-center gap-2 mt-1 px-4 mb-2">
+                <input
+                  type="text"
+                  value={editedContactNameValue}
+                  onChange={(e) => setEditedContactNameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveContactName();
+                    if (e.key === 'Escape') setIsEditingContactName(false);
+                  }}
+                  className="input-noir max-w-[200px] rounded-xl px-4 py-2 text-center font-semibold text-white"
+                  autoFocus
+                />
+                <button
+                  onClick={handleSaveContactName}
+                  className="btn-noir rounded-xl p-2"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsEditingContactName(false)}
+                  className="btn-noir-secondary rounded-xl p-2"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <h2
+                onClick={() => {
+                  setEditedContactNameValue(activeConvo.name);
+                  setIsEditingContactName(true);
+                }}
+                className="text-xl font-bold text-white mb-1 flex items-center justify-center gap-2 cursor-pointer group hover:text-zinc-300 transition-all"
+                title="Clique para editar"
+              >
+                <span>{activeConvo.name}</span>
+                <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-zinc-300 transition-all" />
+              </h2>
+            )}
+            <div className="flex items-center gap-1.5 text-zinc-500 text-sm">
+              <Phone className="w-3.5 h-3.5" />
+              <span>{activeConvo.phone}</span>
             </div>
           </div>
-        </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-8">
+            <MetaCard label="Empresa" value={activeConvo.company} />
+            <MetaCard label="Origem" value={activeConvo.origin || "Não informado"} />
+            <MetaCard label="Estágio" value={activeConvo.stage} />
+            <MetaCard label="Temperatura" value={activeConvo.status.toUpperCase()} />
+          </div>
+
+          <div className="space-y-4">
+            <div className="surface-noir-muted p-4">
+              <p className="label-field mb-2">Anotações do CRM</p>
+              <p className="text-sm text-zinc-400 italic leading-relaxed">
+                {activeConvo.notes || "Nenhuma anotação registrada para este contato."}
+              </p>
+            </div>
+          </div>
+        </Modal>
       )}
       
       {/* Fechamento Modal */}
@@ -3701,25 +3680,18 @@ export default function ConversationsPage() {
 
       {/* === MODAL: COMPARTILHAR CONTATO === */}
       {isShareContactModalOpen && activeConvo && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[80vh]">
-            <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
-              <div className="flex items-center gap-2 text-zinc-100">
-                <Share2 className="w-5 h-5 text-sky-500" />
-                <h3 className="font-semibold text-base">Enviar {activeConvo.name} para...</h3>
-              </div>
-              <button 
-                onClick={() => {
-                  setIsShareContactModalOpen(false);
-                  setShareContactSearchQuery("");
-                }}
-                className="p-2 text-zinc-500 hover:text-white transition-colors rounded-full hover:bg-white/5"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </header>
-            
-            <div className="p-4 border-b border-white/5 bg-[#0f0f12]">
+        <Modal
+          onClose={() => {
+            setIsShareContactModalOpen(false);
+            setShareContactSearchQuery("");
+          }}
+          title={`Enviar ${activeConvo.name} para...`}
+          icon={<Share2 className="h-5 w-5 text-zinc-400" />}
+          maxWidth="max-w-md"
+          overlayClassName="z-[200]"
+          contentClassName="flex flex-1 flex-col p-0"
+        >
+            <div className="border-b border-white/5 p-4">
               <div className="relative">
                 <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -3727,7 +3699,7 @@ export default function ConversationsPage() {
                   placeholder="Buscar contato de destino..."
                   value={shareContactSearchQuery}
                   onChange={(e) => setShareContactSearchQuery(e.target.value)}
-                  className="w-full bg-[#18181b] border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-zinc-200 focus:outline-none focus:border-sky-500/50 transition-colors"
+                  className="input-noir rounded-xl py-2.5 pl-9 pr-4"
                 />
               </div>
             </div>
@@ -3777,49 +3749,40 @@ export default function ConversationsPage() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* === MODAL: QUICK REPLIES === */}
       {isQuickRepliesModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
-            <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
-              <div className="flex items-center gap-2 text-zinc-100">
-                <Zap className="w-5 h-5 text-amber-500" />
-                <h3 className="font-semibold text-base">Respostas Rápidas</h3>
-              </div>
-              <button 
-                onClick={() => setIsQuickRepliesModalOpen(false)}
-                className="p-2 text-zinc-500 hover:text-white transition-colors rounded-full hover:bg-white/5"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </header>
-            
-            <div className="p-6 overflow-y-auto flex-1">
+        <Modal
+          onClose={() => setIsQuickRepliesModalOpen(false)}
+          title="Respostas Rápidas"
+          icon={<Zap className="h-5 w-5 text-amber-500" />}
+          maxWidth="max-w-2xl"
+          overlayClassName="z-[200]"
+          contentClassName="p-6"
+        >
               <div className="mb-6">
                 <p className="text-sm text-zinc-400 mb-4">
                   Crie atalhos para mensagens que você envia com frequência. Para usar, digite <code className="bg-zinc-800 px-1 rounded text-amber-400">/</code> seguido do atalho na caixa de mensagem.
                 </p>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[0.75fr_1fr_2fr_auto]">
                   <input
                     type="text"
                     placeholder="Atalho (ex: ola)"
                     id="qr-shortcut"
-                    className="w-1/4 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                    className="input-noir rounded-xl px-4 py-2"
                   />
                   <input
                     type="text"
                     placeholder="Título (ex: Saudação inicial)"
                     id="qr-title"
-                    className="w-1/4 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                    className="input-noir rounded-xl px-4 py-2"
                   />
                   <textarea
                     placeholder="Mensagem..."
                     id="qr-content"
-                    className="flex-1 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 resize-none h-[42px]"
+                    className="input-noir h-[42px] resize-none rounded-xl px-4 py-2"
                   />
                   <button
                     onClick={async () => {
@@ -3841,7 +3804,7 @@ export default function ConversationsPage() {
                         showToast(res.error || "Erro", "error");
                       }
                     }}
-                    className="bg-amber-500 hover:bg-amber-600 text-black px-4 rounded-xl text-sm font-bold transition-colors"
+                    className="btn-noir rounded-xl px-4 text-xs"
                   >
                     Adicionar
                   </button>
@@ -3855,7 +3818,7 @@ export default function ConversationsPage() {
                   </div>
                 ) : (
                   quickReplies.map((qr) => (
-                    <div key={qr.id} className="bg-white/5 border border-white/5 rounded-xl p-4 group">
+                    <div key={qr.id} className="surface-noir-muted p-4 group">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">/{qr.shortcut}</span>
@@ -3884,9 +3847,7 @@ export default function ConversationsPage() {
                   ))
                 )}
               </div>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* === MODAL: AGENDAR REUNIÃO === */}
@@ -3938,60 +3899,53 @@ export default function ConversationsPage() {
 
       {/* === MODAL: NOVA CONVERSA === */}
       {isNewChatModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
-              <div className="flex items-center gap-2 text-zinc-100">
-                <UserPlus className="w-5 h-5 text-sky-500" />
-                <h3 className="font-semibold text-base">Nova Conversa</h3>
-              </div>
-              <button 
-                onClick={() => {
-                  setIsNewChatModalOpen(false);
-                  setNewChatName("");
-                  setNewChatPhone("");
-                  setNewChatInitialMessage("");
-                }}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition-all"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </header>
-
+        <Modal
+          onClose={() => {
+            setIsNewChatModalOpen(false);
+            setNewChatName("");
+            setNewChatPhone("");
+            setNewChatInitialMessage("");
+          }}
+          title="Nova Conversa"
+          icon={<UserPlus className="h-5 w-5 text-zinc-400" />}
+          maxWidth="max-w-md"
+          overlayClassName="z-[200]"
+          contentClassName="p-0"
+        >
             <form onSubmit={handleCreateNewChatSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Nome do Contato</label>
+                <label className="label-field mb-1.5 block">Nome do Contato</label>
                 <input 
                   type="text" 
                   required
                   placeholder="Ex: Arthur Fava"
                   value={newChatName}
                   onChange={(e) => setNewChatName(e.target.value)}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all"
+                  className="input-noir rounded-xl py-2.5"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Número do WhatsApp</label>
+                <label className="label-field mb-1.5 block">Número do WhatsApp</label>
                 <input 
                   type="text" 
                   required
                   placeholder="Ex: 5511999999999"
                   value={newChatPhone}
                   onChange={(e) => setNewChatPhone(e.target.value)}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all"
+                  className="input-noir rounded-xl py-2.5"
                 />
                 <p className="text-[10px] text-zinc-500 mt-1">Inclua o DDI (55) + DDD + número. Exemplo: 5511999999999</p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Mensagem Inicial (Opcional)</label>
+                <label className="label-field mb-1.5 block">Mensagem Inicial (Opcional)</label>
                 <textarea 
                   placeholder="Envie uma mensagem de boas-vindas..."
                   value={newChatInitialMessage}
                   onChange={(e) => setNewChatInitialMessage(e.target.value)}
                   rows={3}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all resize-none"
+                  className="input-noir resize-none rounded-xl py-2.5"
                 />
               </div>
 
@@ -4004,21 +3958,20 @@ export default function ConversationsPage() {
                     setNewChatPhone("");
                     setNewChatInitialMessage("");
                   }}
-                  className="flex-1 py-2.5 bg-zinc-900 border border-white/5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 rounded-xl text-sm font-semibold transition-all"
+                  className="btn-noir-secondary flex-1 rounded-xl py-2.5 text-sm"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit"
                   disabled={isSubmittingNewChat}
-                  className="flex-1 py-2.5 bg-zinc-100 text-black hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-all shadow"
+                  className="btn-noir flex-1 rounded-xl py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSubmittingNewChat ? "Criando..." : "Iniciar Conversa"}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
@@ -4677,7 +4630,7 @@ function MessageBubble({
           {/* === REACTION BADGE === */}
           {reactionEmojis.length > 0 && (
             <div 
-              className={`absolute bottom-[-10px] ${isOutbound ? 'left-3' : 'right-3'} flex items-center gap-0.5 bg-[#18181b] border border-white/10 rounded-full px-1.5 py-0.5 shadow-lg z-10 text-[10px] select-none hover:scale-105 transition-transform cursor-pointer`}
+              className={`absolute bottom-[-10px] ${isOutbound ? 'left-3' : 'right-3'} flex items-center gap-0.5 rounded-full border border-white/10 bg-[#09090b] px-1.5 py-0.5 shadow-lg z-10 text-[10px] select-none hover:scale-105 transition-transform cursor-pointer`}
               onClick={(e) => {
                 e.stopPropagation();
                 onReactionClick?.(msg.id);

@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import {
   getContactOptions,
+  getCurrentUserInfo,
   getOrganizationUsers,
   getTasks,
   rescheduleTask,
@@ -121,6 +122,7 @@ type FilterState = {
   contactFilter: string;
   productFilter: string;
   stageFilter: string;
+  responsibleFilter: string;
 };
 
 function loadFilters(): FilterState {
@@ -130,6 +132,16 @@ function loadFilters(): FilterState {
     if (raw) return { ...defaultFilters(), ...JSON.parse(raw) };
   } catch { /* ignore */ }
   return defaultFilters();
+}
+
+function shouldDefaultResponsibleFilter(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return true;
+    const parsed = JSON.parse(raw);
+    return !parsed || typeof parsed !== "object" || !("responsibleFilter" in parsed);
+  } catch { return true; }
 }
 
 function defaultFilters(): FilterState {
@@ -142,6 +154,7 @@ function defaultFilters(): FilterState {
     contactFilter: "ALL",
     productFilter: "ALL",
     stageFilter: "ALL",
+    responsibleFilter: "ALL",
   };
 }
 
@@ -162,6 +175,8 @@ export default function TasksPage() {
   const [modalContactId, setModalContactId] = useState("");
 
   const [filters, setFilters] = useState<FilterState>(loadFilters);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [useCurrentUserAsDefault, setUseCurrentUserAsDefault] = useState(shouldDefaultResponsibleFilter);
 
   const updateFilter = useCallback(<K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters((prev) => {
@@ -173,12 +188,13 @@ export default function TasksPage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([getTasks(), getContactOptions(), getOrganizationUsers()])
-      .then(([taskResult, contactResult, userResult]) => {
+    Promise.all([getTasks(), getContactOptions(), getOrganizationUsers(), getCurrentUserInfo()])
+      .then(([taskResult, contactResult, userResult, userInfo]) => {
         if (!alive) return;
         setTasks(taskResult);
         setContacts(contactResult);
         setUsers(userResult);
+        if (userInfo) setCurrentUserId(userInfo.id);
       })
       .catch((error) => {
         console.error("Failed to load tasks:", error);
@@ -189,6 +205,17 @@ export default function TasksPage() {
       });
     return () => { alive = false; };
   }, [showToast]);
+
+  useEffect(() => {
+    if (!currentUserId || !useCurrentUserAsDefault) return;
+    setFilters((prev) => {
+      if (prev.responsibleFilter === currentUserId) return prev;
+      const next = { ...prev, responsibleFilter: currentUserId };
+      saveFilters(next);
+      return next;
+    });
+    setUseCurrentUserAsDefault(false);
+  }, [currentUserId, useCurrentUserAsDefault]);
 
   const handleToggle = async (taskId: string, currentStatus: string) => {
     try {
@@ -251,7 +278,7 @@ export default function TasksPage() {
   const resetFilters = () => {
     const def = defaultFilters();
     setFilters((prev) => {
-      const next = { ...def, viewMode: prev.viewMode };
+      const next = { ...def, viewMode: prev.viewMode, responsibleFilter: currentUserId || "ALL" };
       saveFilters(next);
       return next;
     });
@@ -270,6 +297,7 @@ export default function TasksPage() {
     if (filters.productFilter === "NONE" && task.contactProductNames.length > 0) return false;
     if (filters.productFilter !== "ALL" && filters.productFilter !== "NONE" && !task.contactProductNames.includes(filters.productFilter)) return false;
     if (filters.stageFilter !== "ALL" && task.contactStage !== filters.stageFilter) return false;
+    if (filters.responsibleFilter !== "ALL" && task.ownerId !== filters.responsibleFilter) return false;
 
     if (!search) return true;
     const haystack = [
@@ -286,7 +314,15 @@ export default function TasksPage() {
   const upcomingTasks = activeTasks.filter(isUpcoming);
   const noDateTasks = activeTasks.filter((task) => !task.dueAt);
   const doneTasks = filteredTasks.filter((task) => task.status === "DONE");
-  const hasFilters = Object.values(filters).some((v) => v !== "ALL" && v !== "" && v !== "cards") && filters.searchTerm !== "";
+  const defaultResponsibleFilter = currentUserId || "ALL";
+  const hasFilters = filters.searchTerm !== ""
+    || filters.statusFilter !== "ALL"
+    || filters.typeFilter !== "ALL"
+    || filters.priorityFilter !== "ALL"
+    || filters.contactFilter !== "ALL"
+    || filters.productFilter !== "ALL"
+    || filters.stageFilter !== "ALL"
+    || filters.responsibleFilter !== defaultResponsibleFilter;
 
   const assigneeOptions = users.map((user) => ({ id: user.id, name: user.name || user.email }));
 
@@ -305,7 +341,7 @@ export default function TasksPage() {
               <CheckCircle2 className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold uppercase tracking-wider text-white">Central de Tarefas</h1>
+              <h1 className="heading-page">Central de Tarefas</h1>
               <p className="mt-1 text-sm text-zinc-500">Sua fila operacional para não deixar nenhum lead sem próxima ação.</p>
             </div>
           </div>
@@ -332,7 +368,7 @@ export default function TasksPage() {
 
             <button
               onClick={openNewTaskModal}
-              className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-black transition-colors hover:bg-zinc-200"
+              className="btn-noir flex items-center gap-2 rounded-lg"
             >
               <Plus className="h-4 w-4" />
               Nova tarefa
@@ -371,8 +407,8 @@ export default function TasksPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+        <section className="surface-noir-muted p-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8">
             <div className="relative md:col-span-2 xl:col-span-2">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
               <input
@@ -411,10 +447,22 @@ export default function TasksPage() {
               ))}
             </FilterSelect>
 
+            <FilterSelect value={filters.responsibleFilter} onChange={(v) => updateFilter("responsibleFilter", v)}>
+              <option value="ALL">Todos responsáveis</option>
+              {users.map((user) => {
+                const label = user.name || user.email;
+                return (
+                  <option key={user.id} value={user.id}>
+                    {user.id === currentUserId ? `Eu (${label})` : label}
+                  </option>
+                );
+              })}
+            </FilterSelect>
+
             <button
               onClick={resetFilters}
               disabled={!hasFilters}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="btn-noir-secondary px-3 py-2 text-xs text-zinc-400"
             >
               Limpar
             </button>
@@ -445,7 +493,7 @@ export default function TasksPage() {
             ))}
           </div>
         ) : filteredTasks.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-[#0c0c0e] p-10 text-center">
+          <div className="surface-noir-muted border-dashed p-10 text-center">
             <CheckCircle2 className="mx-auto mb-3 h-8 w-8 text-zinc-700" />
             <p className="font-semibold text-zinc-300">Nenhuma tarefa encontrada</p>
             <p className="mt-1 text-sm text-zinc-600">Ajuste os filtros ou crie uma nova tarefa para sua operação.</p>
@@ -534,7 +582,7 @@ function FilterSelect({ value, onChange, children }: { value: string; onChange: 
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300 outline-none transition-all focus:border-white/20"
+      className="select-noir"
     >
       {children}
     </select>
@@ -551,7 +599,7 @@ function KpiCard({ label, value, icon: Icon, tone }: { label: string; value: num
   };
 
   return (
-    <div className="rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-4">
+    <div className="surface-noir-muted p-4">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</span>
         <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${tones[tone]}`}>
@@ -639,7 +687,7 @@ function TaskCard({
   const chatHref = task.conversationId ? `/conversations?conversationId=${task.conversationId}` : `/conversations?contactId=${task.contactId}`;
 
   return (
-    <div className={`group rounded-2xl border border-white/[0.06] bg-[#0c0c0e] p-4 transition-colors hover:border-white/10 ${isDone ? "opacity-55" : ""}`}>
+    <div className={`group surface-noir-muted p-4 transition-colors hover:border-white/10 ${isDone ? "opacity-55" : ""}`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="flex flex-1 items-start gap-4 min-w-0">
           <button

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, DollarSign, Loader2, X } from "lucide-react";
+import { CheckCircle2, DollarSign, Loader2 } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 
 type ProductSnapshot = {
   productId: string | null;
@@ -21,7 +22,7 @@ type ExistingDeal = {
   closedAt: string;
 };
 
-const inputClass = "w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50 disabled:opacity-60";
+const inputClass = "input-noir disabled:opacity-60";
 
 function formatCurrency(value: number | null | undefined) {
   return new Intl.NumberFormat("pt-BR", {
@@ -150,21 +151,41 @@ export function ClosedDealModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[#0c0c0e] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-emerald-500/10">
-          <div>
-            <h3 className="font-bold text-lg flex items-center gap-2 text-emerald-400">
-              <CheckCircle2 className="w-5 h-5" /> Negocio Fechado
-            </h3>
-            <p className="text-xs text-zinc-500 mt-1">Despache a venda para financeiro e entrega.</p>
+    <Modal
+      onClose={onClose}
+      title="Negocio Fechado"
+      description="Despache a venda para financeiro e entrega."
+      icon={<CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+      maxWidth="max-w-2xl"
+      closeDisabled={isSubmitting}
+      headerClassName="bg-emerald-500/10 p-6"
+      contentClassName="space-y-5 p-6"
+      footerClassName="flex-col md:flex-row md:items-center md:justify-between"
+      footer={(
+        <>
+          <div className="min-h-[20px] text-xs text-red-300">
+            {error && <span>{error}</span>}
           </div>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:bg-white/5 hover:text-white rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-5 overflow-y-auto">
+          <div className="flex justify-end gap-3">
+            <button onClick={onClose} disabled={isSubmitting} className="btn-noir-secondary px-5 py-2.5">
+              Cancelar
+            </button>
+            <button
+              onClick={() => void handleSubmit()}
+              disabled={isSubmitting || isLoading}
+              className="flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-colors hover:bg-zinc-200 disabled:opacity-60"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Despachando...
+                </>
+              ) : existingDeal ? "Atualizar Despacho" : "Despachar Venda"}
+            </button>
+          </div>
+        </>
+      )}
+    >
           <p className="text-sm text-zinc-400">
             Complete as informacoes de fechamento de <strong className="text-white">{leadName}</strong>.
           </p>
@@ -299,40 +320,11 @@ export function ClosedDealModal({
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   placeholder="Detalhes adicionais, combinados de entrega, observacoes financeiras, etc."
-                  className="w-full bg-black/40 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-emerald-500/50 min-h-[90px] resize-none"
+                  className="input-noir min-h-[90px] resize-none"
                 />
               </div>
             </>
           )}
-        </div>
-
-        <div className="p-6 border-t border-white/5 flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-white/[0.02]">
-          <div className="min-h-[20px] text-xs text-red-300">
-            {error && <span>{error}</span>}
-          </div>
-          <div className="flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-zinc-800 text-white hover:bg-zinc-700 transition-colors disabled:opacity-60"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => void handleSubmit()}
-            disabled={isSubmitting || isLoading}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors flex items-center gap-2 disabled:opacity-60"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Despachando...
-              </>
-            ) : existingDeal ? "Atualizar Despacho" : "Despachar Venda"}
-          </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
