@@ -34,10 +34,10 @@
   
   --radius: 0.5rem;
 
-  /* Custom Status Colors - Cinematic */
-  --status-hot: #f59e0b;     /* Amber 500 */
-  --status-warm: #fbbf24;    /* Amber 400 */
-  --status-cold: #3b82f6;    /* Blue 500 */
+  /* Custom Status Colors - Cinematic / Jewel Tones */
+  --status-hot: #f43f5e;     /* Rose 500 */
+  --status-warm: #d97706;    /* Amber 600 */
+  --status-cold: #6366f1;    /* Indigo 500 */
   --status-success: #10b981; /* Emerald 500 */
   --status-danger: #ef4444;  /* Red 500 */
 }
@@ -143,12 +143,24 @@
   }
 }
 
+/* Date/Time picker icons visibility for dark mode */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+.light input[type="date"]::-webkit-calendar-picker-indicator,
+.light input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none;
+}
+
 /* ==========================================
    WHITE MODE (LIGHT THEME) SYSTEM
    ========================================== */
 .light {
   color-scheme: light;
-  --background: #f4f4f7; /* Very light cool grey */
+  --background: #f8f8fa; /* Soft off-white for less glare */
   --foreground: #09090b; /* Zinc 950 */
   
   --card: #ffffff; /* Crisp white */
@@ -191,19 +203,19 @@
     border-bottom: 1px solid var(--border) !important;
   }
 
+  & .bg-\[\#050507\] {
+    background-color: var(--secondary) !important;
+  }
+
   & .bg-\[\#09090b\] {
     background-color: var(--card) !important;
   }
 
-  & .bg-\[\#070709\] {
+  & .card-dark {
     background-color: var(--card) !important;
   }
 
-  & .bg-\[\#0c0c0e\] {
-    background-color: var(--card) !important;
-  }
-
-  & .bg-\[\#0c0c0e\]\/95 {
+  & .card-dark-glass {
     background-color: rgba(255, 255, 255, 0.95) !important;
   }
 
@@ -396,18 +408,20 @@
 
 /* Chat Message Bubbles Exchange */
 .light {
-  & .bg-zinc-100.text-black,
-  & .bg-white.text-black {
-    background-color: var(--primary) !important;
-    color: var(--primary-foreground) !important;
+  /* Sent messages - elegant slate/dark gray instead of pure black */
+  & .chat-bubble-sent {
+    background-color: #e4e4e7 !important; /* Zinc 200 */
+    color: #18181b !important; /* Zinc 900 */
     border: none !important;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
   }
 
-  & .bg-zinc-900.text-zinc-300 {
-    background-color: var(--muted) !important;
-    color: var(--foreground) !important;
-    border-color: var(--border) !important;
+  /* Received messages - soft white card instead of muted gray */
+  & .chat-bubble-received {
+    background-color: #ffffff !important;
+    color: #27272a !important; /* Zinc 800 for readability */
+    border-color: #e4e4e7 !important; /* Zinc 200 */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02) !important;
   }
 }
 

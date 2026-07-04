@@ -9,36 +9,55 @@ datasource db {
 }
 
 model Organization {
-  id                  String               @id @default(cuid())
-  name                String
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  plan                String               @default("free")
-  subscriptionExpiresAt DateTime?
-  slug                String               @unique
-  auditLogs           AuditLog[]
-  contacts            Contact[]
-  prompts             PromptTemplate[]
-  users               User[]
-  whatsappConnections WhatsAppConnection[]
-  pipelineStages      PipelineStage[]
-  products            Product[]
-  leadOrigins         LeadOrigin[]
+  id                           String               @id @default(cuid())
+  name                         String
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @updatedAt
+  plan                         String               @default("free")
+  slug                         String               @unique
+  subscriptionExpiresAt        DateTime?
+  maxUsers                     Int                  @default(5)
+  dealNotificationEmail        String?
+  masterclassNotificationEmail String?
+  reportToken                  String?               @unique
+  auditLogs                    AuditLog[]
+  closedDeals                  ClosedDeal[]
+  contactIdentities            ContactIdentity[]
+  contacts                     Contact[]
+  invitations                  Invitation[]
+  leadOrigins                  LeadOrigin[]
+  pipelineStages               PipelineStage[]
+  products                     Product[]
+  prompts                      PromptTemplate[]
+  QuickReply                   QuickReply[]
+  users                        User[]
+  whatsappConnections          WhatsAppConnection[]
 }
 
 model User {
-  id             String       @id @default(cuid())
-  clerkId        String       @unique
-  email          String       @unique
-  name           String?
-  organizationId String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  role           String       @default("member")
-  analyses       AIAnalysis[]
-  auditLogs      AuditLog[]
-  tasks          Task[]
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                  String               @id @default(cuid())
+  clerkId             String               @unique
+  email               String               @unique
+  name                String?
+  phone               String?
+  organizationId      String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  role                String               @default("member")
+  googleAccessToken   String?
+  googleRefreshToken  String?
+  googleTokenExpiry   DateTime?
+  analyses            AIAnalysis[]
+  auditLogs           AuditLog[]
+  assignedContacts    Contact[]            @relation("AssignedContacts")
+  closedDeals         ClosedDeal[]         @relation("ClosedDealsByUser")
+  meetingsAsCloser    Meeting[]            @relation("MeetingCloser")
+  meetingsCreated     Meeting[]            @relation("MeetingCreator")
+  QuickReply          QuickReply[]
+  completedTasks      Task[]               @relation("TaskCompletedBy")
+  tasks               Task[]
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  whatsappConnections WhatsAppConnection[]
 }
 
 model WhatsAppConnection {
@@ -60,48 +79,95 @@ model WhatsAppConnection {
   lastConnectionAttemptAt DateTime?
   qrCodeCreatedAt         DateTime?
   isActive                Boolean          @default(false)
+  userId                  String?
+  conversations           Conversation[]
   integrationLogs         IntegrationLog[]
   organization            Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                    User?            @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, userId, provider])
+  @@index([organizationId, provider, status, isActive], map: "WhatsAppConnection_org_provider_status_active_idx")
+  @@index([phoneNumberId, status])
 }
 
 model Contact {
-  id             String             @id @default(cuid())
-  phone          String
-  name           String
-  organizationId String
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  company        String?
-  email          String?
-  interestArea   String?
-  notes          String?
-  origin         String?
-  potentialValue Float?
-  isLead         Boolean            @default(false)
-  avatarUrl      String?
-  monthlyRevenue Float?
-  mainChallenges String?
-  productId      String?
-  product        Product?           @relation(fields: [productId], references: [id])
-  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  conversations  Conversation[]
-  leadHistory    LeadStageHistory[]
-  tasks          Task[]
+  id              String             @id @default(cuid())
+  phone           String
+  name            String
+  organizationId  String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  avatarUrl       String?
+  company         String?
+  email           String?
+  interestArea    String?
+  notes           String?
+  origin          String?
+  potentialValue  Float?
+  isLead          Boolean            @default(false)
+  mainChallenges  String?
+  monthlyRevenue  Float?
+  productId       String?
+  assignedUserId  String?
+  address         String?
+  assignedUser    User?              @relation("AssignedContacts", fields: [assignedUserId], references: [id])
+  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product         Product?           @relation(fields: [productId], references: [id])
+  contactProducts ContactProduct[]
+  identities      ContactIdentity[]
+  conversations   Conversation[]
+  closedDeals     ClosedDeal[]
+  leadHistory     LeadStageHistory[]
+  meetings        Meeting[]
+  tasks           Task[]
 
   @@unique([phone, organizationId])
+  @@index([organizationId, isLead, updatedAt])
+  @@index([organizationId, assignedUserId])
+}
+
+model ContactIdentity {
+  id             String       @id @default(cuid())
+  organizationId String
+  contactId      String
+  type           String
+  value          String
+  createdAt      DateTime     @default(now())
+  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, type, value])
+  @@index([contactId])
 }
 
 model Product {
-  id             String       @id @default(cuid())
-  organizationId String
-  name           String
-  description    String?
-  price          Float?
-  isActive       Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contacts       Contact[]
+  id              String           @id @default(cuid())
+  organizationId  String
+  name            String
+  description     String?
+  price           Float?
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  contacts        Contact[]
+  contactProducts ContactProduct[]
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, name])
+}
+
+model ContactProduct {
+  contactId   String
+  productId   String?
+  createdAt   DateTime @default(now())
+  customName  String?
+  customPrice Float?
+  id          String   @id @default(cuid())
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@index([productId])
 }
 
 model PipelineStage {
@@ -110,43 +176,96 @@ model PipelineStage {
   name           String
   color          String       @default("bg-zinc-500")
   order          Int          @default(0)
-  visible        Boolean      @default(true)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  visible        Boolean      @default(true)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, order])
 }
 
 model Conversation {
-  id            String             @id @default(cuid())
-  contactId     String
-  status        String             @default("OPEN")
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  lastMessageAt DateTime?
-  outcome       String?
-  stage         String             @default("PRIMEIRO_CONTATO")
-  temperature   String             @default("COLD")
-  analyses      AIAnalysis[]
-  contact       Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  messages      Message[]
-  scheduledMessages ScheduledMessage[]
+  id                   String              @id @default(cuid())
+  contactId            String
+  status               String              @default("OPEN")
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  lastMessageAt        DateTime?
+  outcome              String?
+  stage                String              @default("PRIMEIRO_CONTATO")
+  temperature          String              @default("COLD")
+  whatsAppConnectionId String?
+  analyses             AIAnalysis[]
+  contact              Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  closedDeals          ClosedDeal[]
+  whatsAppConnection   WhatsAppConnection? @relation(fields: [whatsAppConnectionId], references: [id])
+  messages             Message[]
+  scheduledMessages    ScheduledMessage[]
+  tasks                Task[]
+
+  @@index([contactId, status, updatedAt])
+  @@index([whatsAppConnectionId, lastMessageAt, updatedAt], map: "Conversation_connection_lastMessage_updatedAt_idx")
+  @@index([whatsAppConnectionId, status, lastMessageAt], map: "Conversation_connection_status_lastMessage_idx")
+  @@index([stage])
+  @@index([temperature])
+}
+
+model ClosedDeal {
+  id                String        @id @default(cuid())
+  organizationId    String
+  contactId         String
+  conversationId    String?
+  totalValue        Float
+  installmentCount  Int?
+  firstPaymentValue Float?
+  firstPaymentDate  Int?
+  projectDuration   String?
+  paymentMethod     String?
+  hasSignal         Boolean       @default(false)
+  signalValue       Float?
+  notes             String?
+  productsJson      Json?
+  closedAt          DateTime      @default(now())
+  closedByUserId    String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  conversation      Conversation? @relation(fields: [conversationId], references: [id])
+  closedBy          User?         @relation("ClosedDealsByUser", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, contactId])
+  @@index([organizationId, closedAt])
+  @@index([contactId])
+  @@index([closedByUserId])
+  @@index([firstPaymentDate])
 }
 
 model Message {
-  id             String           @id @default(cuid())
-  conversationId String
-  direction      String
-  type           String
-  content        String?
-  mediaUrl       String?
-  timestamp      DateTime         @default(now())
-  waMessageId    String?          @unique
-  isEdited       Boolean          @default(false)
-  status         String           @default("SENT")
-  reactions      Json?
-  transcript     AudioTranscript?
-  media          Media?
-  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  id                    String           @id @default(cuid())
+  conversationId        String
+  whatsAppConnectionId  String?
+  direction             String
+  type                  String
+  content               String?
+  mediaUrl              String?
+  mediaStatus           String           @default("PENDING")
+  mediaError            String?
+  mediaAttempts         Int              @default(0)
+  mediaLastAttemptAt    DateTime?
+  waMessageKey          Json?
+  waMessagePayload      Json?
+  timestamp             DateTime         @default(now())
+  waMessageId           String?          @unique
+  isEdited              Boolean          @default(false)
+  reactions             Json?
+  status                String           @default("SENT")
+  transcript            AudioTranscript?
+  media                 Media?
+  conversation          Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, timestamp])
+  @@index([whatsAppConnectionId, timestamp])
 }
 
 model Media {
@@ -154,6 +273,7 @@ model Media {
   messageId   String   @unique
   mimeType    String
   fileSize    Int?
+  originalFileName String?
   storageKey  String
   originalUrl String?
   createdAt   DateTime @default(now())
@@ -199,6 +319,10 @@ model AIAnalysis {
   conversation       Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user               User             @relation(fields: [userId], references: [id])
   suggestedReplies   SuggestedReply[]
+  tasks              Task[]
+
+  @@index([conversationId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model SuggestedReply {
@@ -225,20 +349,33 @@ model LeadStageHistory {
 }
 
 model Task {
-  id          String    @id @default(cuid())
-  contactId   String?
-  userId      String
-  title       String
-  description String?
-  type        String    @default("FOLLOW_UP")
-  priority    String    @default("MEDIUM")
-  status      String    @default("PENDING")
-  dueAt       DateTime?
-  completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  contact     Contact?  @relation(fields: [contactId], references: [id])
-  user        User      @relation(fields: [userId], references: [id])
+  id             String        @id @default(cuid())
+  contactId      String?
+  userId         String
+  title          String
+  description    String?
+  type           String        @default("FOLLOW_UP")
+  priority       String        @default("MEDIUM")
+  status         String        @default("PENDING")
+  dueAt          DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  source         String        @default("MANUAL")
+  reminderAt     DateTime?
+  completedById  String?
+  conversationId String?
+  analysisId     String?
+  analysis       AIAnalysis?   @relation(fields: [analysisId], references: [id])
+  completedBy    User?         @relation("TaskCompletedBy", fields: [completedById], references: [id])
+  contact        Contact?      @relation(fields: [contactId], references: [id])
+  conversation   Conversation? @relation(fields: [conversationId], references: [id])
+  user           User          @relation(fields: [userId], references: [id])
+
+  @@index([userId, status, dueAt])
+  @@index([contactId, status, dueAt])
+  @@index([conversationId])
+  @@index([analysisId])
 }
 
 model PromptTemplate {
@@ -256,6 +393,7 @@ model PromptTemplate {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, slug, version])
+  @@index([organizationId, category, isActive, version, updatedAt], map: "PromptTemplate_org_category_active_version_updatedAt_idx")
 }
 
 model IntegrationLog {
@@ -268,6 +406,8 @@ model IntegrationLog {
   errorMsg     String?
   createdAt    DateTime           @default(now())
   connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
 }
 
 model AuditLog {
@@ -282,6 +422,9 @@ model AuditLog {
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model LeadOrigin {
@@ -309,10 +452,65 @@ model ScheduledMessage {
   conversationId String
   content        String
   scheduledFor   DateTime
-  status         String       @default("PENDING") // PENDING, SENT, FAILED
+  status         String       @default("PENDING")
   notified       Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledFor])
+  @@index([conversationId, status])
 }
 
+model Meeting {
+  id             String   @id @default(cuid())
+  contactId      String
+  organizationId String
+  closerId       String
+  createdById    String
+  title          String
+  type           String
+  duration       Int
+  scheduledAt    DateTime
+  location       String?
+  meetLink       String?
+  googleEventId  String?
+  contactEmail   String?
+  notes          String?
+  status         String   @default("SCHEDULED")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  closer         User     @relation("MeetingCloser", fields: [closerId], references: [id])
+  contact        Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdBy      User     @relation("MeetingCreator", fields: [createdById], references: [id])
+
+  @@index([organizationId, scheduledAt])
+  @@index([closerId, scheduledAt])
+  @@index([contactId, scheduledAt])
+}
+
+model Invitation {
+  id             String       @id @default(cuid())
+  organizationId String
+  token          String       @unique
+  email          String?
+  role           String       @default("member")
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model QuickReply {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  shortcut       String
+  title          String
+  content        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId, shortcut])
+}

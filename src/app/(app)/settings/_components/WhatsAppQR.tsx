@@ -3,8 +3,10 @@
 import { useState, useEffect } from "react";
 import { createWhatsAppInstance, getWhatsAppQrCode } from "@/actions/whatsapp";
 import { Loader2, QrCode, RefreshCw, CheckCircle2 } from "lucide-react";
+import { useToast } from "@/components/ui/Toast";
 
 export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActive }: { currentStatus: string, instanceName?: string | null, instanceToken?: string | null, isActive?: boolean }) {
+  const { showToast } = useToast();
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -16,14 +18,14 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
       const result = await createWhatsAppInstance();
 
       if ('error' in result) {
-        alert(result.error);
+        showToast(result.error || "Erro desconhecido", "error");
         return;
       }
 
       const qr = await getWhatsAppQrCode(result.instanceName);
 
       if ('error' in qr) {
-        alert(qr.error);
+        showToast(qr.error || "Erro desconhecido", "error");
         return;
       }
 
@@ -31,7 +33,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
       setStatus('QRCODE');
     } catch (error) {
       console.error(error);
-      alert("Ocorreu um erro inesperado ao tentar gerar o QR Code.");
+      showToast("Ocorreu um erro inesperado ao tentar gerar o QR Code.", "error");
     } finally {
       setIsLoading(false);
     }
@@ -44,7 +46,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
       const qr = await getWhatsAppQrCode(instanceName);
 
       if ('error' in qr) {
-        alert(qr.error);
+        showToast(qr.error || "Erro desconhecido", "error");
         return;
       }
 
@@ -70,7 +72,7 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
       const { disconnectWhatsApp } = await import("@/actions/whatsapp");
       const res = await disconnectWhatsApp(deleteHistory);
       if ('error' in res) {
-        alert(res.error);
+        showToast(res.error || "Erro desconhecido", "error");
         return;
       }
       setStatus('DISCONNECTED');
@@ -79,11 +81,11 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
         localStorage.removeItem("sales_arcaffo_conversations");
         localStorage.removeItem("sales_arcaffo_last_sync_time");
       }
-      alert(deleteHistory ? "WhatsApp desconectado e histórico de conversas limpo!" : "WhatsApp desconectado!");
+      showToast(deleteHistory ? "WhatsApp desconectado e histórico de conversas limpo!" : "WhatsApp desconectado!", "error");
       window.location.reload();
     } catch (e) {
       console.error(e);
-      alert("Falha ao desconectar.");
+      showToast("Falha ao desconectar.", "error");
     } finally {
       setIsDisconnecting(false);
     }
@@ -96,9 +98,9 @@ export function WhatsAppQR({ currentStatus, instanceName, instanceToken, isActiv
     if (status === 'QRCODE' || currentStatus !== 'CONNECTED') {
       interval = setInterval(async () => {
         try {
-          const { getSettingsData } = await import("@/actions/crm");
-          const data = await getSettingsData();
-          if (data?.whatsappConnection?.status === 'CONNECTED') {
+          const { getWhatsAppStatus } = await import("@/actions/whatsapp");
+          const data = await getWhatsAppStatus();
+          if (data?.status === 'CONNECTED') {
             setStatus('CONNECTED');
             clearInterval(interval);
             // Optionally reload the page to refresh all data globally

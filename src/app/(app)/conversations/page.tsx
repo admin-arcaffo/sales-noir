@@ -15,6 +15,8 @@ import {
   Pencil,
   Phone,
   Play,
+  Pause,
+  Volume2,
   Save,
   Search,
   Send,
@@ -26,6 +28,7 @@ import {
   CheckCheck,
   Trash2,
   Check,
+  CheckCircle2,
   Square,
   X,
   PanelLeftClose,
@@ -42,6 +45,12 @@ import {
   User,
   Plus,
   RefreshCw,
+  Calendar,
+  MapPin,
+  Mail,
+  Share2,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import {
   getConversations,
@@ -52,6 +61,7 @@ import {
   sendMessageReaction,
   getWhatsAppProfile,
   updateWhatsAppProfile,
+  syncSingleConversation,
   getContactProfile,
   updateContactProfile,
   updateConversationTemperature,
@@ -60,15 +70,36 @@ import {
   startNewConversation,
   getPipelineStages,
   syncAfterReconnect,
+  forwardMessages,
+  deleteConversation,
   type ConversationAnalysisData,
   type ConversationData,
   type ConversationMessage,
   type ProductData,
   type PipelineStageData,
+  updateContactAddress,
+  updateContactEmail,
+  resolveGoogleMapsAddress,
+  getQuickReplies,
+  createQuickReply,
+  updateQuickReply,
+  deleteQuickReply,
+  type QuickReplyData,
+  getTasks,
+  toggleTaskStatus,
+  type TaskData,
 } from "@/actions/crm";
 import type { AnalysisResponse } from "@/lib/ai/prompts";
+import { useToast } from "@/components/ui/Toast";
+import { useFloatingChat } from "@/context/FloatingChatContext";
+import { CHAT_CACHE_INVALIDATED_EVENT, clearChatCache } from "@/lib/chat-cache";
 
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
+const MeetingModal = lazy(() => import("@/app/(app)/_components/MeetingModal").then((module) => ({ default: module.MeetingModal })));
+const QuoteEditor = lazy(() => import("@/app/(app)/_components/QuoteEditor").then((module) => ({ default: module.QuoteEditor })));
+const TaskModal = lazy(() => import("@/app/(app)/_components/TaskModal").then((module) => ({ default: module.TaskModal })));
+const ClosedDealModal = lazy(() => import("@/components/modals/ClosedDealModal").then((module) => ({ default: module.ClosedDealModal })));
+const InviteMasterclassModal = lazy(() => import("@/components/modals/InviteMasterclassModal").then((module) => ({ default: module.InviteMasterclassModal })));
 
 const STATUS_COLORS = {
   hot: "bg-amber-500",
@@ -92,6 +123,285 @@ const getStageDisplay = (stage: string | null | undefined): string => {
   return LEGACY_STAGE_LABELS[stage] || stage;
 };
 
+function normalizeStageText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function isClosedDealStage(value: string) {
+  const normalized = normalizeStageText(value);
+  return normalized.includes("fechamento") || normalized.includes("negocio fechado") || normalized.includes("negocios fechados") || normalized.includes("contrato fechado");
+}
+
+function isMediaMessageType(type: string) {
+  return ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "STICKER"].includes(type);
+}
+
+function isTemporaryWhatsAppMediaUrl(value?: string | null) {
+  if (!value) return false;
+  return value.includes("pps.whatsapp.net") || value.includes("mmg.whatsapp.net") || value.includes(".whatsapp.net/v/");
+}
+
+const DIRECT_MEDIA_UPLOAD_LIMIT = 4 * 1024 * 1024;
+
+export type SmartEntity = {
+  type: 'address' | 'email' | 'maps_link';
+  value: string;
+};
+
+export const extractSmartEntities = (text: string): SmartEntity[] => {
+  const entities: SmartEntity[] = [];
+  if (!text) return entities;
+
+  // Email regex
+  const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
+  if (emailMatch) {
+    entities.push({ type: 'email', value: emailMatch[0] });
+  }
+
+  // Google Maps regex
+  const mapsMatch = text.match(/(https?:\/\/(?:www\.)?google\.com\/maps[^\s]+|https?:\/\/maps\.app\.goo\.gl\/[^\s]+|https?:\/\/g\.page\/[^\s]+)/);
+  if (mapsMatch) {
+    entities.push({ type: 'maps_link', value: mapsMatch[0] });
+  } else {
+    // Address regex (approx: 1-3 words followed by comma and number, optionally a hyphen and neighborhood)
+    // Examplo: Rua Joao Silva, 343 ou Rua X, 123 - Centro
+    const addressMatch = text.match(/\b([A-Za-zÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ]+){0,2}),\s*(\d+)(?:\s*-\s*[A-Za-zÀ-ÖØ-öø-ÿ\s]+)?\b/);
+    if (addressMatch) {
+      entities.push({ type: 'address', value: addressMatch[0] });
+    }
+  }
+
+  return entities;
+};
+
+function formatDateTimeInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function getDueAtFromTimeWindow(timeWindow?: string | null) {
+  if (!timeWindow) return "";
+
+  const value = timeWindow.toLowerCase();
+  const date = new Date();
+
+  if (value.includes("amanh")) {
+    date.setDate(date.getDate() + 1);
+    date.setHours(9, 0, 0, 0);
+    return formatDateTimeInput(date);
+  }
+
+  if (value.includes("hoje")) {
+    date.setHours(Math.max(date.getHours() + 2, 18), 0, 0, 0);
+    return formatDateTimeInput(date);
+  }
+
+  const hourMatch = value.match(/(\d+)\s*(h|hora|horas)/);
+  if (hourMatch) {
+    date.setHours(date.getHours() + Number(hourMatch[1]));
+    return formatDateTimeInput(date);
+  }
+
+  const dayMatch = value.match(/(\d+)\s*(d|dia|dias)/);
+  if (dayMatch) {
+    date.setDate(date.getDate() + Number(dayMatch[1]));
+    date.setHours(9, 0, 0, 0);
+    return formatDateTimeInput(date);
+  }
+
+  if (value.includes("semana")) {
+    date.setDate(date.getDate() + 7);
+    date.setHours(9, 0, 0, 0);
+    return formatDateTimeInput(date);
+  }
+
+  return "";
+}
+
+function mergeConversationMessages(existing: ConversationMessage[], incoming: ConversationMessage[]) {
+  const messageMap = new Map(existing.map((message) => [message.id, message]));
+
+  incoming.forEach((message) => {
+    const previous = messageMap.get(message.id);
+    const incomingMediaUrl = message.mediaUrl && !isTemporaryWhatsAppMediaUrl(message.mediaUrl) ? message.mediaUrl : null;
+    const previousMediaUrl = previous?.mediaUrl && !isTemporaryWhatsAppMediaUrl(previous.mediaUrl) ? previous.mediaUrl : null;
+    messageMap.set(message.id, {
+      ...previous,
+      ...message,
+      mediaUrl: incomingMediaUrl ?? previousMediaUrl ?? null,
+    });
+  });
+
+  return Array.from(messageMap.values()).sort((a, b) => (
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  ));
+}
+
+function mergeConversationData(existing: ConversationData, incoming: ConversationData): ConversationData {
+  return {
+    ...existing,
+    ...incoming,
+    latestAnalysis: incoming.latestAnalysis ?? existing.latestAnalysis,
+    contactProducts: incoming.contactProducts ?? existing.contactProducts,
+    messages: mergeConversationMessages(existing.messages, incoming.messages),
+  };
+}
+
+function stripTemporaryConversationMediaUrls(conversations: ConversationData[]) {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map((message) => ({
+      ...message,
+      mediaUrl: isTemporaryWhatsAppMediaUrl(message.mediaUrl) ? null : message.mediaUrl,
+    })),
+  }));
+}
+
+const CustomAudioPlayer = ({ src }: { src: string }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const togglePlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch((err) => console.error("Audio playback failed:", err));
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (!audioRef.current) return;
+    setCurrentTime(audioRef.current.currentTime);
+  };
+
+  const handleLoadedMetadata = () => {
+    if (!audioRef.current) return;
+    // Evita valores infinitos ou inválidos de metadados
+    if (isFinite(audioRef.current.duration)) {
+      setDuration(audioRef.current.duration);
+    }
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (!audioRef.current || duration === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const width = rect.width;
+    const percentage = clickX / width;
+    audioRef.current.currentTime = percentage * duration;
+  };
+
+  const formatTime = (time: number) => {
+    if (isNaN(time) || !isFinite(time)) return "00:00";
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+    };
+  }, [src]);
+
+  // Se o áudio carregar a duração depois
+  useEffect(() => {
+    if (audioRef.current && isFinite(audioRef.current.duration) && duration === 0) {
+      setDuration(audioRef.current.duration);
+    }
+  });
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div className="flex items-center gap-3 bg-zinc-900/60 backdrop-blur-sm border border-white/[0.04] rounded-xl p-2.5 min-w-[240px] max-w-[280px] shadow-lg relative select-none mb-1">
+      <audio ref={audioRef} src={src} preload="metadata" />
+
+      <button
+        onClick={togglePlay}
+        className="w-8 h-8 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black flex items-center justify-center transition-all active:scale-95 shadow-md shrink-0"
+      >
+        {isPlaying ? (
+          <Pause className="w-3.5 h-3.5 fill-black text-black" />
+        ) : (
+          <Play className="w-3.5 h-3.5 fill-black text-black ml-0.5" />
+        )}
+      </button>
+
+      <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+        {/* Progress Bar */}
+        <div
+          onClick={handleSeek}
+          className="h-1.5 w-full bg-zinc-800 hover:bg-zinc-700/80 rounded-full cursor-pointer relative overflow-hidden transition-colors"
+        >
+          <div
+            style={{ width: `${progress}%` }}
+            className="h-full bg-emerald-500 rounded-full transition-all duration-75"
+          />
+        </div>
+
+        <div className="flex justify-between items-center text-[10px] text-zinc-500 font-mono">
+          <span>{formatTime(currentTime)}</span>
+          <span>{formatTime(duration)}</span>
+        </div>
+      </div>
+
+      <Volume2 className="w-3.5 h-3.5 text-zinc-500 shrink-0 hidden sm:block" />
+    </div>
+  );
+};
+
+const SafeAvatar = ({ src, alt, className }: { src?: string | null, alt?: string, className?: string }) => {
+  const [error, setError] = useState(false);
+
+  if (!src || error) {
+    return (
+      <div className={`flex items-center justify-center bg-gray-200 dark:bg-zinc-800 text-gray-500 font-medium ${className}`}>
+        {alt ? alt.charAt(0).toUpperCase() : "?"}
+      </div>
+    );
+  }
+
+  return (
+    <img 
+      src={src} 
+      alt={alt || "Avatar"} 
+      className={className} 
+      onError={() => setError(true)} 
+    />
+  );
+};
+
+
 export default function ConversationsPage() {
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [selectedConvo, setSelectedConvo] = useState<string | null>(null);
@@ -99,24 +409,38 @@ export default function ConversationsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isSyncingConvo, setIsSyncingConvo] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [isSavingStage, setIsSavingStage] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [sellerContext, setSellerContext] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hasAppliedConversationParamRef = useRef(false);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 160)}px`;
+    }
+  }, [draftMessage]);
   const [draftStage, setDraftStage] = useState("PRIMEIRO_CONTATO");
   const [notesDraft, setNotesDraft] = useState("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [meetingModalOpen, setMeetingModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSyncTimeRef = useRef<string | null>(null);
+  const lastSyncTimeMapRef = useRef<Record<string, number>>({});
   
   // Custom sidebar metadata dropdown states
   const [products, setProducts] = useState<ProductData[]>([]);
   const [leadOrigins, setLeadOrigins] = useState<{ id: string; name: string }[]>([]);
   const [pipelineStages, setPipelineStages] = useState<PipelineStageData[]>([]);
-  const [draftProduct, setDraftProduct] = useState("");
+  const [draftProducts, setDraftProducts] = useState<string[]>([]);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [draftOrigin, setDraftOrigin] = useState("");
   const [isSavingOrigin, setIsSavingOrigin] = useState(false);
@@ -129,11 +453,17 @@ export default function ConversationsPage() {
   const [pendingSchedules, setPendingSchedules] = useState<any[]>([]);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
-  const [toasts, setToasts] = useState<{ id: string; message: string }[]>([]);
+  const { showToast } = useToast();
 
   // Unread messages tracking
-  const [lastReadMap, setLastReadMap] = useState<Record<string, string>>({});
+  const chatContext = useFloatingChat();
+  const lastReadMap = chatContext?.lastReadMap || {};
+  const setLastReadMap = chatContext?.setLastReadMap || (() => {});
   const [connectionStatus, setConnectionStatus] = useState<string>("CONNECTED");
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string>("");
+  const [availableConnections, setAvailableConnections] = useState<{ id: string; name: string }[]>([]);
+  const [assignedToMe, setAssignedToMe] = useState(true);
+  const [cacheInvalidationVersion, setCacheInvalidationVersion] = useState(0);
 
   // Nova Conversa modal states
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
@@ -142,6 +472,17 @@ export default function ConversationsPage() {
   const [newChatInitialMessage, setNewChatInitialMessage] = useState("");
   const [isSubmittingNewChat, setIsSubmittingNewChat] = useState(false);
   
+  // Quick Replies states
+  const [quickReplies, setQuickReplies] = useState<QuickReplyData[]>([]);
+  const [isQuickRepliesModalOpen, setIsQuickRepliesModalOpen] = useState(false);
+  const [quickReplyFilter, setQuickReplyFilter] = useState("");
+  const [filteredQuickReplies, setFilteredQuickReplies] = useState<QuickReplyData[]>([]);
+  const [activeQuickReplyIndex, setActiveQuickReplyIndex] = useState(0);
+  const [showQuickReplyDropdown, setShowQuickReplyDropdown] = useState(false);
+  const [pendingClosedDeal, setPendingClosedDeal] = useState<{ leadId: string; newStage: string; newStageLabel: string } | null>(null);
+  const [inviteMasterclassLeadId, setInviteMasterclassLeadId] = useState<string | null>(null);
+  const quickReplyDropdownRef = useRef<HTMLDivElement>(null);
+
   // Sincronização pós-reconexão
   const [isSyncing, setIsSyncing] = useState(false);
   const prevConnectionStatusRef = useRef<string | null>(null);
@@ -153,10 +494,17 @@ export default function ConversationsPage() {
   const [forwardQuery, setForwardQuery] = useState("");
   const [isForwarding, setIsForwarding] = useState(false);
   const [activeTab, setActiveTab] = useState<"ativos" | "aguardando" | "arquivados">("ativos");
+  const [tacticalTab, setTacticalTab] = useState<"lead" | "ia" | "tasks" | "acoes">("lead");
 
   // Edit Contact Name states
   const [isEditingContactName, setIsEditingContactName] = useState(false);
   const [editedContactNameValue, setEditedContactNameValue] = useState("");
+  const [isEditingCompany, setIsEditingCompany] = useState(false);
+  const [editedCompanyValue, setEditedCompanyValue] = useState("");
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [editedEmailValue, setEditedEmailValue] = useState("");
+  const [isEditingInterestArea, setIsEditingInterestArea] = useState(false);
+  const [editedInterestAreaValue, setEditedInterestAreaValue] = useState("");
 
   // Smart Filter states
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
@@ -209,26 +557,37 @@ export default function ConversationsPage() {
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem("sales_arcaffo_conversations");
-        const cachedSync = localStorage.getItem("sales_arcaffo_last_sync_time");
         if (cached) {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setConversations(parsed);
+            setConversations(stripTemporaryConversationMediaUrls(parsed));
             setIsLoading(false);
-            if (cachedSync) {
-              lastSyncTimeRef.current = cachedSync;
-            }
           }
         }
         
-        const cachedRead = localStorage.getItem("sales_arcaffo_last_read_map");
-        if (cachedRead) {
-          setLastReadMap(JSON.parse(cachedRead));
-        }
+        // the lastReadMap is now handled by the FloatingChatContext
       } catch (e) {
         console.error("Failed to load cached conversations from localStorage", e);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleInvalidation = () => {
+      clearChatCache();
+      lastSyncTimeRef.current = null;
+      lastSyncTimeMapRef.current = {};
+      hasAppliedConversationParamRef.current = false;
+      setConversations([]);
+      setSelectedConvo(null);
+      setIsLoading(true);
+      setCacheInvalidationVersion((version) => version + 1);
+    };
+
+    window.addEventListener(CHAT_CACHE_INVALIDATED_EVENT, handleInvalidation);
+    return () => window.removeEventListener(CHAT_CACHE_INVALIDATED_EVENT, handleInvalidation);
   }, []);
 
   // Manage parent layout sidebar visibility on mobile
@@ -245,18 +604,9 @@ export default function ConversationsPage() {
         document.documentElement.classList.remove("has-active-chat");
       }
     };
-  }, [selectedConvo]);
+  }, [selectedConvo, selectedConnectionId]);
 
-  // Save lastReadMap to localStorage
-  useEffect(() => {
-    if (Object.keys(lastReadMap).length > 0 && typeof window !== "undefined") {
-      try {
-        localStorage.setItem("sales_arcaffo_last_read_map", JSON.stringify(lastReadMap));
-      } catch (e) {
-        console.error("Failed to save lastReadMap to localStorage", e);
-      }
-    }
-  }, [lastReadMap]);
+  // Saving lastReadMap to localStorage is now handled by FloatingChatContext
 
   // Mark active/selected conversation as read
   useEffect(() => {
@@ -276,7 +626,8 @@ export default function ConversationsPage() {
     if (conversations.length > 0 && typeof window !== "undefined") {
       try {
         // Enormously reduce storage footprint by only caching the last 5 messages per conversation
-        const cacheFriendlyList = conversations.map(c => ({
+        // and limiting cache to the 30 most recent conversations to avoid QuotaExceededError
+        const cacheFriendlyList = conversations.slice(0, 30).map(c => ({
           ...c,
           messages: c.messages.slice(-5)
         }));
@@ -310,20 +661,95 @@ export default function ConversationsPage() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isContactProfileModalOpen, setIsContactProfileModalOpen] = useState(false);
   const [myProfile, setMyProfile] = useState<any>(null);
+  const [isShareContactModalOpen, setIsShareContactModalOpen] = useState(false);
+  const [shareContactSearchQuery, setShareContactSearchQuery] = useState("");
+  const [isSharingContact, setIsSharingContact] = useState(false);
+  const [leadTasks, setLeadTasks] = useState<TaskData[]>([]);
+  const [isLoadingLeadTasks, setIsLoadingLeadTasks] = useState(false);
+  const [taskModal, setTaskModal] = useState<{
+    contactId: string;
+    contactName: string;
+    defaultTitle?: string;
+    defaultDescription?: string;
+    defaultType?: string;
+    defaultPriority?: string;
+    defaultDueAt?: string;
+    defaultSource?: string;
+    defaultConversationId?: string | null;
+    defaultAnalysisId?: string | null;
+  } | null>(null);
   
   // Estados de Colapso das Áreas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isProfileCollapsed, setIsProfileCollapsed] = useState(false);
   const [isAnalysisCollapsed, setIsAnalysisCollapsed] = useState(false);
+  const [showMobileActions, setShowMobileActions] = useState(false);
+
+  useEffect(() => {
+    getQuickReplies().then(setQuickReplies).catch(console.error);
+    
+    // Auto-collapse analysis panel on mobile
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsAnalysisCollapsed(true);
+    }
+  }, []);
 
   // Auto-scroll to bottom when messages change
   const activeConvo = conversations.find((conversation) => conversation.id === selectedConvo) || null;
-  
+
+  const openTaskModal = (defaults?: {
+    title?: string;
+    description?: string;
+    type?: string;
+    priority?: string;
+    dueAt?: string;
+    source?: string;
+    analysisId?: string | null;
+  }) => {
+    if (!activeConvo) return;
+
+    setTaskModal({
+      contactId: activeConvo.contactId,
+      contactName: activeConvo.name,
+      defaultTitle: defaults?.title || "",
+      defaultDescription: defaults?.description || "",
+      defaultType: defaults?.type || "FOLLOW_UP",
+      defaultPriority: defaults?.priority || "MEDIUM",
+      defaultDueAt: defaults?.dueAt || "",
+      defaultSource: defaults?.source || "MANUAL",
+      defaultConversationId: activeConvo.id,
+      defaultAnalysisId: defaults?.analysisId || null,
+    });
+  };
+
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [activeConvo?.messages.length, selectedConvo]);
+
+  useEffect(() => {
+    let alive = true;
+
+    if (!activeConvo?.contactId) {
+      setLeadTasks([]);
+      return;
+    }
+
+    setIsLoadingLeadTasks(true);
+    getTasks({ contactId: activeConvo.contactId })
+      .then((tasks) => {
+        if (alive) setLeadTasks(tasks);
+      })
+      .catch((error) => console.error("Failed to load lead tasks:", error))
+      .finally(() => {
+        if (alive) setIsLoadingLeadTasks(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeConvo?.contactId]);
 
   // Close menus on outside click
   useEffect(() => {
@@ -363,7 +789,7 @@ export default function ConversationsPage() {
       }
     } catch (err) {
       console.error(err);
-      alert("Falha ao encaminhar mensagens.");
+      showToast("Falha ao encaminhar mensagens.", "error");
     } finally {
       setIsForwarding(false);
     }
@@ -379,21 +805,14 @@ export default function ConversationsPage() {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
 
-  const showNotification = (message: string) => {
-    const id = Math.random().toString(36).substring(7);
-    setToasts(prev => [...prev, { id, message }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 5000);
-  };
-
+  
   const checkScheduledNotifications = async () => {
     try {
       const { getUnnotifiedScheduledMessages, markScheduledMessagesAsNotified } = await import("@/actions/crm");
       const unnotified = await getUnnotifiedScheduledMessages();
       if (unnotified && unnotified.length > 0) {
         for (const msg of unnotified) {
-          showNotification(`Mensagem agendada enviada para ${msg.conversation.contact.name}: "${msg.content.substring(0, 30)}..."`);
+          showToast(`Mensagem agendada enviada para ${msg.conversation.contact.name}: "${msg.content.substring(0, 30)}..."`);
         }
         const ids = unnotified.map(m => m.id);
         await markScheduledMessagesAsNotified(ids);
@@ -423,14 +842,14 @@ export default function ConversationsPage() {
       const { scheduleMessages } = await import("@/actions/crm");
       
       if (!scheduleGlobalDate || !scheduleGlobalTime) {
-        alert("Preencha a data e hora globais para o agendamento.");
+        showToast("Preencha a data e hora globais para o agendamento.", "error");
         setIsSavingSchedule(false);
         return;
       }
 
       const validMessages = scheduledMessages.filter(item => item.content.trim());
       if (validMessages.length === 0) {
-        alert("Preencha ao menos uma mensagem para agendar.");
+        showToast("Preencha ao menos uma mensagem para agendar.", "error");
         setIsSavingSchedule(false);
         return;
       }
@@ -444,7 +863,7 @@ export default function ConversationsPage() {
       console.log(`[Schedule] Browser TZ: ${browserTZ}, Local: ${baseDate.toString()}, UTC: ${baseDate.toISOString()}`);
 
       if (baseDate.getTime() <= Date.now()) {
-        alert("A data e hora devem ser no futuro. Ajuste o agendamento.");
+        showToast("A data e hora devem ser no futuro. Ajuste o agendamento.", "error");
         setIsSavingSchedule(false);
         return;
       }
@@ -459,12 +878,12 @@ export default function ConversationsPage() {
       });
       
       await scheduleMessages(selectedConvo, messagesToSchedule);
-      alert("Agendamento salvo com sucesso!");
+      showToast("Agendamento salvo com sucesso!", "success");
       void loadScheduledMessages(selectedConvo);
       setIsScheduleOpen(false);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Erro ao salvar agendamento.");
+      showToast(err.message || "Erro ao salvar agendamento.", "error");
     } finally {
       setIsSavingSchedule(false);
     }
@@ -476,7 +895,21 @@ export default function ConversationsPage() {
       await cancelScheduledMessage(id);
       if (selectedConvo) void loadScheduledMessages(selectedConvo);
     } catch (err: any) {
-      alert("Erro ao cancelar: " + err.message);
+      showToast("Erro ao cancelar: " + err.message, "error");
+    }
+  };
+
+  const handleToggleLeadTask = async (task: TaskData) => {
+    try {
+      const updated = await toggleTaskStatus(task.id, task.status);
+      setLeadTasks((current) => current.map((item) => (
+        item.id === task.id
+          ? { ...item, status: updated.status }
+          : item
+      )));
+    } catch (error) {
+      console.error("Failed to toggle task:", error);
+      showToast("Não foi possível atualizar a tarefa.", "error");
     }
   };
 
@@ -485,39 +918,110 @@ export default function ConversationsPage() {
     setSelectedConvo(conversationId);
     setDraftStage(conversation?.stageKey || "PRIMEIRO_CONTATO");
     setNotesDraft(conversation?.notes || "");
-    setDraftProduct(conversation?.productId || "");
+    setDraftProducts(conversation?.productIds || []);
     setDraftOrigin(conversation?.origin || "");
     setAnalysisResult(conversation?.latestAnalysis || null);
     setDraftMessage("");
 
     // Load scheduled messages for this conversation
     void loadScheduledMessages(conversationId);
+
+    // Intelligent On-Demand Sync (20s cooldown)
+    const now = Date.now();
+    const lastSync = lastSyncTimeMapRef.current[conversationId] || 0;
+    if (now - lastSync > 20000) {
+      setIsSyncingConvo(true);
+      void (async () => {
+        try {
+          const syncResult = await syncSingleConversation(conversationId);
+          if (syncResult && syncResult.success && syncResult.newMessages > 0) {
+            const resultData = await getConversations(undefined, selectedConnectionId, { messageLimit: 50, runMaintenance: false, assignedToMe });
+            setConversations(resultData.conversations);
+          }
+        } catch (e) {
+          console.error("Background sync failed:", e);
+        } finally {
+          lastSyncTimeMapRef.current[conversationId] = Date.now();
+          setIsSyncingConvo(false);
+        }
+      })();
+    }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || conversations.length === 0) return;
+    if (hasAppliedConversationParamRef.current) return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestedConversationId = urlParams.get("conversationId");
+    const requestedContactId = urlParams.get("contactId");
+    
+    if (!requestedConversationId && !requestedContactId) return;
+
+    let targetConversationId = requestedConversationId;
+
+    if (!targetConversationId && requestedContactId) {
+      const convoByContact = conversations.find(c => c.contactId === requestedContactId);
+      if (convoByContact) {
+        targetConversationId = convoByContact.id;
+      }
+    }
+
+    if (!targetConversationId) return;
+
+    if (selectedConvo === targetConversationId) {
+      hasAppliedConversationParamRef.current = true;
+      return;
+    }
+    
+    if (!conversations.some((conversation) => conversation.id === targetConversationId)) return;
+
+    hasAppliedConversationParamRef.current = true;
+    selectConversation(targetConversationId, conversations);
+  }, [conversations, selectedConvo]);
 
   const handleSaveContactName = async () => {
     if (!editedContactNameValue.trim() || !activeConvo) return;
+    setIsEditingContactName(false);
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations(current => current.map(c => {
+      if (c.contactId === activeConvo.contactId) {
+        return {
+          ...c,
+          name: editedContactNameValue.trim(),
+          initials: editedContactNameValue.trim().substring(0, 2).toUpperCase()
+        };
+      }
+      return c;
+    }));
+    
     try {
       await updateContactProfile(activeConvo.contactId, { name: editedContactNameValue.trim() });
-      
-      // Update local state instantly
-      setConversations(current => current.map(c => {
-        if (c.contactId === activeConvo.contactId) {
-          return {
-            ...c,
-            name: editedContactNameValue.trim(),
-            initials: editedContactNameValue.trim().substring(0, 2).toUpperCase()
-          };
-        }
-        return c;
-      }));
-      
-      // Re-fetch conversations to keep selected states fully updated
-      const resultData = await getConversations();
-      setConversations(resultData.conversations);
-      
-      setIsEditingContactName(false);
     } catch (e) {
-      alert("Erro ao salvar nome do contato.");
+      setConversations(previousConversations);
+      showToast("Erro ao salvar nome do contato.", "error");
+    }
+  };
+
+  const handleSaveContactField = async (field: 'company' | 'email' | 'interestArea', value: string) => {
+    if (!activeConvo) return;
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations(current => current.map(c => {
+      if (c.contactId === activeConvo.contactId) {
+        return { ...c, [field]: value.trim() };
+      }
+      return c;
+    }));
+    
+    try {
+      await updateContactProfile(activeConvo.contactId, { [field]: value.trim() });
+    } catch (e) {
+      setConversations(previousConversations);
+      showToast(`Erro ao salvar campo.`, "error");
     }
   };
 
@@ -530,7 +1034,7 @@ export default function ConversationsPage() {
     try {
       const cleanPhone = phone.replace(/\D/g, "");
       if (!cleanPhone) {
-        alert("Número de telefone inválido.");
+        showToast("Número de telefone inválido.", "error");
         return;
       }
       setIsSubmittingNewChat(true);
@@ -550,7 +1054,7 @@ export default function ConversationsPage() {
         setNewChatInitialMessage("");
       }
     } catch (e: any) {
-      alert(e?.message || "Erro ao iniciar conversa.");
+      showToast(e?.message || "Erro ao iniciar conversa.", "error");
     } finally {
       setIsSubmittingNewChat(false);
     }
@@ -559,21 +1063,33 @@ export default function ConversationsPage() {
   const handleManualSync = async (isAuto = false) => {
     if (isSyncing) return;
     setIsSyncing(true);
-    if (!isAuto) showNotification("Iniciando sincronização...");
+    if (!isAuto) showToast("Iniciando sincronização...");
     try {
       const res = await syncAfterReconnect();
       if (res.success) {
-        showNotification(`Sincronização concluída: ${res.newMessages} novas mensagens importadas.`);
+        showToast(`Sincronização concluída: ${res.newMessages} novas mensagens importadas.`);
         // Force full refresh
         lastSyncTimeRef.current = null;
         const resultData = await getConversations();
         setConversations(resultData.conversations);
+        
+        // Prevent old messages from appearing as unread
+        setLastReadMap(prev => {
+          const next = { ...prev };
+          const now = new Date().toISOString();
+          resultData.conversations.forEach(c => {
+            if (!next[c.id]) {
+              next[c.id] = now;
+            }
+          });
+          return next;
+        });
       } else {
-        if (!isAuto) showNotification(`Falha na sincronização: ${res.error || res.reason}`);
+        if (!isAuto) showToast(`Falha na sincronização: ${res.error || res.reason}`);
       }
     } catch (e) {
       console.error(e);
-      if (!isAuto) showNotification("Erro ao sincronizar.");
+      if (!isAuto) showToast("Erro ao sincronizar.");
     } finally {
       setIsSyncing(false);
     }
@@ -582,11 +1098,11 @@ export default function ConversationsPage() {
   const handleCreateNewChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newChatName.trim()) {
-      alert("Por favor, insira o nome do contato.");
+      showToast("Por favor, insira o nome do contato.", "error");
       return;
     }
     if (!newChatPhone.trim()) {
-      alert("Por favor, insira o número de telefone.");
+      showToast("Por favor, insira o número de telefone.", "error");
       return;
     }
     
@@ -600,14 +1116,22 @@ export default function ConversationsPage() {
       if (result.success && result.conversationId) {
         const resultData = await getConversations();
         setConversations(resultData.conversations);
-        selectConversation(result.conversationId, resultData.conversations);
+        
+        const exists = resultData.conversations.some(c => c.id === result.conversationId);
+        if (exists) {
+          selectConversation(result.conversationId, resultData.conversations);
+          showToast("Conversa iniciada com sucesso!", "success");
+        } else {
+          showToast("Conversa criada com sucesso! Caso não apareça, verifique os filtros ativos ou sua conexão WhatsApp.", "success");
+        }
+
         setIsNewChatModalOpen(false);
         setNewChatName("");
         setNewChatPhone("");
         setNewChatInitialMessage("");
       }
     } catch (e: any) {
-      alert(e?.message || "Erro ao criar nova conversa.");
+      showToast(e?.message || "Erro ao criar nova conversa.", "error");
     } finally {
       setIsSubmittingNewChat(false);
     }
@@ -633,7 +1157,7 @@ export default function ConversationsPage() {
       await editOutboundMessage(editingMsg.id, editingMsg.text);
       setConversations(prev => prev.map(c => 
         c.id === activeConvo.id 
-          ? { ...c, messages: c.messages.map(m => m.id === editingMsg.id ? { ...m, text: editingMsg.text } : m) }
+          ? { ...c, messages: c.messages.map(m => m.id === editingMsg.id ? { ...m, text: editingMsg.text, isEdited: true } : m) }
           : c
       ));
       setEditingMsg(null);
@@ -645,10 +1169,27 @@ export default function ConversationsPage() {
   const handleReaction = async (msgId: string, emoji: string) => {
     if (!activeConvo) return;
     try {
+      // Optimistic update
+      setConversations(prev => prev.map(c => 
+        c.id === activeConvo.id 
+          ? {
+              ...c,
+              messages: c.messages.map(m => {
+                if (m.id === msgId) {
+                  return {
+                    ...m,
+                    reactions: emoji ? { [emoji]: Date.now() } : null
+                  };
+                }
+                return m;
+              })
+            }
+          : c
+      ));
       await sendMessageReaction(activeConvo.id, msgId, emoji);
-      // Otimista: poderíamos adicionar a reação localmente, mas por enquanto vamos esperar o webhook/polling
     } catch (err) {
       console.error(err);
+      showToast("Erro ao reagir à mensagem.", "error");
     }
   };
 
@@ -673,6 +1214,30 @@ export default function ConversationsPage() {
   };
 
   useEffect(() => {
+    if (connectionStatus === "DISCONNECTED") {
+      let isSubscribed = true;
+      const healConnection = async () => {
+        try {
+          const { getWhatsAppStatus } = await import("@/actions/whatsapp");
+          const liveStatus = await getWhatsAppStatus();
+          if (isSubscribed && liveStatus?.status === 'CONNECTED') {
+            console.log("[AUTO-HEAL] Chat detected active connection, self-healing status.");
+            setConnectionStatus('CONNECTED');
+          }
+        } catch (e) {
+          console.warn("[AUTO-HEAL] Failed to self-heal connection:", e);
+        }
+      };
+      
+      const timer = setTimeout(healConnection, 2000);
+      return () => {
+        isSubscribed = false;
+        clearTimeout(timer);
+      };
+    }
+  }, [connectionStatus]);
+
+  useEffect(() => {
     let alive = true;
     let timeoutId: NodeJS.Timeout;
 
@@ -685,7 +1250,13 @@ export default function ConversationsPage() {
       if (!alive) return;
       try {
         const syncTime = lastSyncTimeRef.current;
-        const url = `/api/conversations${syncTime ? `?since=${encodeURIComponent(syncTime)}` : ''}`;
+        const queryParams = new URLSearchParams();
+        if (syncTime) queryParams.set("since", syncTime);
+        if (selectedConnectionId) queryParams.set("connection_id", selectedConnectionId);
+        queryParams.set("assignedToMe", String(assignedToMe));
+        
+        const qs = queryParams.toString();
+        const url = `/api/conversations${qs ? `?${qs}` : ""}`;
         const res = await fetch(url);
         if (res.status === 401) {
           setIsLoading(false);
@@ -703,17 +1274,21 @@ export default function ConversationsPage() {
           orgId: string;
           syncTime: string;
           connectionStatus: string;
+          connections?: { id: string; name: string }[];
         };
         if (!alive) return;
 
         setConnectionStatus(result.connectionStatus);
+        if (result.connections) {
+          setAvailableConnections(result.connections);
+        }
 
         // Detect reconnection and trigger automatic sync
         if (
           prevConnectionStatusRef.current === "DISCONNECTED" && 
           result.connectionStatus === "CONNECTED"
         ) {
-          showNotification("WhatsApp reconectado! Sincronizando mensagens perdidas...");
+          showToast("WhatsApp reconectado! Sincronizando mensagens perdidas...");
           handleManualSync(true);
         }
         prevConnectionStatusRef.current = result.connectionStatus;
@@ -750,17 +1325,38 @@ export default function ConversationsPage() {
           } else if (result.conversations.length === 0) {
             return prev;
           } else {
+            // Check for new inbound messages before merging
+            let hasNewInbound = false;
+            const previousById = new Map(prev.map((conversation) => [conversation.id, conversation]));
+            result.conversations.forEach(c => {
+              const oldConvo = previousById.get(c.id);
+              if (oldConvo) {
+                const oldMessageIds = new Set(oldConvo.messages.map((message) => message.id));
+                const newMsgs = c.messages.filter(m => m.direction === 'inbound' && !oldMessageIds.has(m.id));
+                if (newMsgs.length > 0) hasNewInbound = true;
+              } else {
+                const inboundMsgs = c.messages.filter(m => m.direction === 'inbound');
+                if (inboundMsgs.length > 0) hasNewInbound = true;
+              }
+            });
+
+            if (hasNewInbound) {
+              const audio = new Audio("/sounds/notification.mp3");
+              audio.play().catch(e => console.error("Audio playback failed:", e));
+            }
+
             // Merge delta changes
             const updatedMap = new Map(result.conversations.map(c => [c.id, c]));
-            const merged = prev.map(c => updatedMap.has(c.id) ? updatedMap.get(c.id)! : c);
-            const newItems = result.conversations.filter(c => !prev.some(p => p.id === c.id));
+            const previousIds = new Set(prev.map((conversation) => conversation.id));
+            const merged = prev.map(c => updatedMap.has(c.id) ? mergeConversationData(c, updatedMap.get(c.id)!) : c);
+            const newItems = result.conversations.filter(c => !previousIds.has(c.id));
             nextList = [...newItems, ...merged];
           }
 
           // Sort by the timestamp of the last message (newest first)
           nextList.sort((a, b) => {
-            const timeA = a.messages.length > 0 ? new Date(a.messages[a.messages.length - 1].timestamp).getTime() : 0;
-            const timeB = b.messages.length > 0 ? new Date(b.messages[b.messages.length - 1].timestamp).getTime() : 0;
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
             return timeB - timeA;
           });
 
@@ -803,21 +1399,27 @@ export default function ConversationsPage() {
       alive = false;
       clearTimeout(timeoutId);
     };
-  }, [selectedConvo]);
+  }, [selectedConvo, selectedConnectionId, assignedToMe, cacheInvalidationVersion]);
 
-  const handleSaveProduct = async (prodId: string) => {
+  const handleToggleProduct = async (prodId: string) => {
     if (!activeConvo) return;
     setIsSavingProduct(true);
+    const newProducts = draftProducts.includes(prodId)
+      ? draftProducts.filter(id => id !== prodId)
+      : [...draftProducts, prodId];
+    
+    // Optimistic update
+    setDraftProducts(newProducts);
     try {
       await updateContactProfile(activeConvo.contactId, {
-        productId: prodId || null,
+        productIds: newProducts,
       });
       setConversations(current => current.map(c => 
-        c.id === activeConvo.id ? { ...c, productId: prodId || null } : c
+        c.id === activeConvo.id ? { ...c, productIds: newProducts, productId: newProducts.length > 0 ? newProducts[0] : null } : c
       ));
-      setDraftProduct(prodId);
     } catch (err) {
       console.error("Failed to save product:", err);
+      setDraftProducts(draftProducts); // rollback
     } finally {
       setIsSavingProduct(false);
     }
@@ -826,16 +1428,21 @@ export default function ConversationsPage() {
   const handleSaveOrigin = async (orig: string) => {
     if (!activeConvo) return;
     setIsSavingOrigin(true);
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations(current => current.map(c => 
+      c.id === activeConvo.id ? { ...c, origin: orig || null } : c
+    ));
+    setDraftOrigin(orig);
+    
     try {
       await updateContactProfile(activeConvo.contactId, {
         origin: orig || null,
       });
-      setConversations(current => current.map(c => 
-        c.id === activeConvo.id ? { ...c, origin: orig || null } : c
-      ));
-      setDraftOrigin(orig);
     } catch (err) {
       console.error("Failed to save origin:", err);
+      setConversations(previousConversations);
     } finally {
       setIsSavingOrigin(false);
     }
@@ -844,13 +1451,18 @@ export default function ConversationsPage() {
   const handleSaveTemp = async (temp: "HOT" | "WARM" | "COLD") => {
     if (!activeConvo) return;
     setIsSavingTemp(true);
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations(current => current.map(c => 
+      c.id === activeConvo.id ? { ...c, status: temp.toLowerCase() as any } : c
+    ));
+    
     try {
       await updateConversationTemperature(activeConvo.id, temp);
-      setConversations(current => current.map(c => 
-        c.id === activeConvo.id ? { ...c, status: temp.toLowerCase() as any } : c
-      ));
     } catch (err) {
       console.error("Failed to save temperature:", err);
+      setConversations(previousConversations);
     } finally {
       setIsSavingTemp(false);
     }
@@ -945,92 +1557,218 @@ export default function ConversationsPage() {
     }
   };
 
+  const getClientMediaType = (file: File) => {
+    if (file.type.startsWith("image/")) return "image";
+    if (file.type.startsWith("audio/")) return "audio";
+    if (file.type.startsWith("video/")) return "video";
+    return "document";
+  };
+
+  const appendConversationMessage = (newMessage: ConversationMessage) => {
+    if (!activeConvo) return;
+    setConversations((current) =>
+      current.map((c) =>
+        c.id === activeConvo.id
+          ? { ...c, messages: [...c.messages, newMessage] }
+          : c
+        )
+    );
+  };
+
+  const parseXhrJson = (xhr: XMLHttpRequest) => {
+    try {
+      return JSON.parse(xhr.responseText || "{}");
+    } catch {
+      return {};
+    }
+  };
+
+  const sendMediaDirect = async (file: File, mediatype: string) => {
+    if (!activeConvo) throw new Error("Conversa não selecionada.");
+
+    const formData = new FormData();
+    formData.append("conversationId", activeConvo.id);
+    formData.append("file", file, file.name);
+    formData.append("mediatype", mediatype);
+    formData.append("mimetype", file.type || "application/octet-stream");
+    formData.append("fileName", file.name);
+
+    return await new Promise<any>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setUploadProgress(Math.round((event.loaded * 100) / event.total));
+        }
+      };
+
+      xhr.onload = () => {
+        const payload = parseXhrJson(xhr);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload);
+          return;
+        }
+
+        const error = new Error(payload.error || "Failed to send media") as Error & { status?: number };
+        error.status = xhr.status;
+        reject(error);
+      };
+
+      xhr.onerror = () => reject(new Error("Network Error"));
+      xhr.open("POST", "/api/media/send", true);
+      xhr.send(formData);
+    });
+  };
+
+  const uploadToSignedUrl = async (file: File, uploadUrl: string) => {
+    const formData = new FormData();
+    formData.append("cacheControl", "3600");
+    formData.append("", file, file.name);
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setUploadProgress(Math.min(85, Math.round((event.loaded * 85) / event.total)));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+          return;
+        }
+        reject(new Error(`Falha no upload direto (${xhr.status}).`));
+      };
+
+      xhr.onerror = () => reject(new Error("Falha de rede no upload direto."));
+      xhr.open("PUT", uploadUrl, true);
+      xhr.setRequestHeader("x-upsert", "false");
+      xhr.send(formData);
+    });
+  };
+
+  const sendMediaViaStorage = async (file: File, mediatype: string) => {
+    if (!activeConvo) throw new Error("Conversa não selecionada.");
+
+    const signedResponse = await fetch("/api/media/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fileName: file.name,
+        mimetype: file.type || "application/octet-stream",
+        mediatype,
+        fileSize: file.size,
+      }),
+    });
+    const signedPayload = await signedResponse.json().catch(() => ({}));
+
+    if (!signedResponse.ok || !signedPayload.success) {
+      throw new Error(signedPayload.error || "Não foi possível preparar upload direto.");
+    }
+
+    await uploadToSignedUrl(file, signedPayload.uploadUrl);
+    setUploadProgress(90);
+
+    const sendResponse = await fetch("/api/media/send-from-storage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: activeConvo.id,
+        storageKey: signedPayload.storageKey,
+        mediatype,
+        mimetype: file.type || "application/octet-stream",
+        fileName: file.name,
+      }),
+    });
+    const payload = await sendResponse.json().catch(() => ({}));
+
+    if (!sendResponse.ok || !payload.success) {
+      throw new Error(payload.error || "Falha ao enviar mídia após upload direto.");
+    }
+
+    setUploadProgress(100);
+    return payload;
+  };
+
+  const sendMediaFile = async (file: File, mediatype = getClientMediaType(file)) => {
+    if (file.size > DIRECT_MEDIA_UPLOAD_LIMIT) {
+      return sendMediaViaStorage(file, mediatype);
+    }
+
+    try {
+      return await sendMediaDirect(file, mediatype);
+    } catch (error) {
+      if ((error as { status?: number }).status === 413) {
+        return sendMediaViaStorage(file, mediatype);
+      }
+      throw error;
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !activeConvo) return;
-    
+
     setIsSending(true);
+    setUploadProgress(0);
+
     try {
-      // 1. Determine media type
-      let mediatype = "document";
-      if (file.type.startsWith("image/")) mediatype = "image";
-      else if (file.type.startsWith("audio/")) mediatype = "audio";
-      else if (file.type.startsWith("video/")) mediatype = "video";
+      const payload = await sendMediaFile(file);
 
-      // 2. Read as Base64
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
-        
-        try {
-          const { sendMediaMessage } = await import("@/actions/crm");
-          const newMessage = await sendMediaMessage({
-            conversationId: activeConvo.id,
-            base64,
-            mediatype,
-            mimetype: file.type,
-            fileName: file.name
-          });
+      if (!payload.success) {
+        throw new Error(payload.error || "Failed to send media");
+      }
 
-          // Optimistic UI update
-          setConversations((current) =>
-            current.map((c) =>
-              c.id === activeConvo.id
-                ? { ...c, messages: [...c.messages, newMessage] }
-                : c
-            )
-          );
-        } catch (err) {
-          console.error("Failed to send media:", err);
-          alert("Falha ao enviar arquivo.");
-        } finally {
-          setIsSending(false);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-      };
-      reader.readAsDataURL(file);
+      appendConversationMessage(payload.message as ConversationMessage);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to send media:", err);
+      showToast(err instanceof Error ? err.message : "Falha ao enviar arquivo.", "error");
+    } finally {
       setIsSending(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const sendRecordedAudio = async (blob: Blob) => {
+    const audioFile = blob instanceof File ? blob : new File([blob], "audio.webm", { type: blob.type || "audio/webm" });
+    const payload = await sendMediaFile(audioFile, "audio");
+
+    if (!payload.success) {
+      throw new Error(payload.error || "Failed to send audio");
+    }
+
+    appendConversationMessage(payload.message as ConversationMessage);
   };
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const preferredTypes = [
+        "audio/ogg;codecs=opus",
+        "audio/webm;codecs=opus",
+        "audio/mp4",
+        "audio/webm",
+      ];
+      const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: "audio/ogg; codecs=opus" });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64 = reader.result as string;
-          try {
-            const { sendMediaMessage } = await import("@/actions/crm");
-            const newMessage = await sendMediaMessage({
-              conversationId: activeConvo!.id,
-              base64,
-              mediatype: "audio",
-              mimetype: "audio/ogg",
-            });
-            
-            setConversations((current) =>
-              current.map((c) =>
-                c.id === activeConvo!.id
-                  ? { ...c, messages: [...c.messages, newMessage] }
-                  : c
-              )
-            );
-          } catch (err) {
-            console.error("Failed to send audio:", err);
-            alert("Erro ao enviar áudio.");
-          } finally {
-            setIsSending(false);
-          }
-        };
-        reader.readAsDataURL(blob);
+        const blobType = recorder.mimeType || mimeType || "audio/webm";
+        const extension = blobType.includes("ogg") ? "ogg" : blobType.includes("mp4") ? "m4a" : "webm";
+        const blob = new Blob(chunks, { type: blobType });
+        try {
+          await sendRecordedAudio(new File([blob], `audio.${extension}`, { type: blobType }));
+        } catch (err) {
+          console.error("Failed to send audio:", err);
+          showToast(err instanceof Error ? err.message : "Erro ao enviar áudio.", "error");
+        } finally {
+          setIsSending(false);
+        }
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -1045,7 +1783,7 @@ export default function ConversationsPage() {
 
     } catch (err) {
       console.error("Microphone access denied:", err);
-      alert("Permissão de microfone negada.");
+      showToast("Permissão de microfone negada.", "error");
     }
   };
 
@@ -1126,16 +1864,20 @@ export default function ConversationsPage() {
   const handleSaveNotes = async () => {
     if (!activeConvo) return;
     setIsSavingNotes(true);
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations((current) => 
+      current.map((c) => c.id === activeConvo.id ? { ...c, notes: notesDraft } : c)
+    );
+    
     try {
       const { updateContactNotes } = await import("@/actions/crm");
       await updateContactNotes(activeConvo.contactId, notesDraft);
-      
-      setConversations((current) => 
-        current.map((c) => c.id === activeConvo.id ? { ...c, notes: notesDraft } : c)
-      );
     } catch (err) {
       console.error(err);
-      alert("Erro ao salvar anotações.");
+      setConversations(previousConversations);
+      showToast("Erro ao salvar anotações.", "error");
     } finally {
       setIsSavingNotes(false);
     }
@@ -1146,21 +1888,34 @@ export default function ConversationsPage() {
       return;
     }
 
+    const stageConfig = pipelineStages.find(s => s.name === draftStage);
+    const newStageLabel = stageConfig?.name || draftStage;
+
+    if (isClosedDealStage(newStageLabel) || isClosedDealStage(draftStage)) {
+      setPendingClosedDeal({ leadId: activeConvo.contactId, newStage: draftStage, newStageLabel });
+      return;
+    }
+
     setIsSavingStage(true);
+    const previousConversations = [...conversations];
+    
+    // Optimistic Update
+    setConversations((current) => current.map((conversation) => (
+      conversation.id === activeConvo.id
+        ? {
+            ...conversation,
+            stageKey: draftStage,
+            stage: getStageDisplay(draftStage),
+          }
+        : conversation
+    )));
+    
     try {
       await updateConversationStage(activeConvo.id, draftStage);
-
-      setConversations((current) => current.map((conversation) => (
-        conversation.id === activeConvo.id
-          ? {
-              ...conversation,
-              stageKey: draftStage,
-              stage: getStageDisplay(draftStage),
-            }
-          : conversation
-      )));
     } catch (error) {
       console.error("Save stage error:", error);
+      setConversations(previousConversations);
+      showToast("Erro ao salvar etapa.", "error");
     } finally {
       setIsSavingStage(false);
     }
@@ -1189,12 +1944,14 @@ export default function ConversationsPage() {
         )}
 
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-zinc-900 flex items-center justify-between bg-[#09090b] sticky top-0 z-10">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xs font-bold text-white uppercase tracking-wider">
-              Mensagens
-            </h1>
-          </div>
+        <div className={`p-4 border-b border-zinc-900 bg-[#09090b] sticky top-0 z-10 flex ${isSidebarCollapsed ? "flex-col items-center justify-center gap-3" : "items-center justify-between"}`}>
+          {!isSidebarCollapsed && (
+            <div className="flex items-center gap-2">
+              <h1 className="text-xs font-bold text-white uppercase tracking-wider">
+                Mensagens
+              </h1>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => handleManualSync(false)}
@@ -1205,13 +1962,6 @@ export default function ConversationsPage() {
               }`}
             >
               <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin text-zinc-400" : ""}`} />
-            </button>
-            <button
-              onClick={() => setIsNewChatModalOpen(true)}
-              className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 rounded transition-colors flex items-center justify-center"
-              title="Nova Conversa"
-            >
-              <MessageSquare className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -1241,23 +1991,23 @@ export default function ConversationsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-zinc-500 transition-all placeholder:text-zinc-600"
                   />
                 </div>
-                <button
-                  onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-                  className={`p-2 rounded-lg border hover:bg-white/10 transition-colors relative ${
-                    isFilterExpanded || (filterUnreadOnly || filterStage !== "all" || filterProduct !== "all")
-                      ? "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
-                      : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
-                  }`}
-                  title="Filtros Inteligentes"
-                >
+                  <button
+                    onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+                    className={`p-2 rounded-lg border hover:bg-white/10 transition-colors relative ${
+                      isFilterExpanded || (filterUnreadOnly || filterStage !== "all" || filterProduct !== "all" || selectedConnectionId)
+                        ? "bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
+                        : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
+                    }`}
+                    title="Filtros Inteligentes"
+                  >
                   <Filter className="w-4 h-4" />
-                  {(filterUnreadOnly || filterStage !== "all" || filterProduct !== "all") && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-amber-500 rounded-full" />
+                  {(filterUnreadOnly || filterStage !== "all" || filterProduct !== "all" || selectedConnectionId) && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-sky-500 rounded-full" />
                   )}
                 </button>
                 <button
                   onClick={() => setIsNewChatModalOpen(true)}
-                  className="p-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold transition-all shadow shrink-0"
+                  className="p-2 rounded-lg bg-zinc-100 hover:bg-white text-black font-semibold transition-all shadow shrink-0"
                   title="Nova Conversa"
                 >
                   <UserPlus className="w-4 h-4" />
@@ -1275,19 +2025,59 @@ export default function ConversationsPage() {
                 <div className="mt-1 p-3 bg-white/[0.02] border border-white/5 rounded-lg space-y-3 transition-all duration-200">
                   <div className="flex items-center justify-between text-xs text-zinc-400">
                     <span className="font-semibold uppercase tracking-wider text-[9px] text-zinc-500">Filtros Inteligentes</span>
-                    {(filterUnreadOnly || filterStage !== "all" || filterProduct !== "all") && (
+                    {(filterUnreadOnly || filterStage !== "all" || filterProduct !== "all" || selectedConnectionId || !assignedToMe) && (
                       <button 
                         onClick={() => {
                           setFilterUnreadOnly(false);
                           setFilterStage("all");
                           setFilterProduct("all");
+                          setSelectedConnectionId("");
+                          setAssignedToMe(true);
+                          lastSyncTimeRef.current = null;
                         }}
-                        className="text-[10px] text-amber-500 hover:text-amber-400 transition-colors"
+                        className="text-[10px] text-sky-500 hover:text-sky-400 transition-colors"
                       >
                         Limpar Todos
                       </button>
                     )}
                   </div>
+
+                  <div className="mb-2">
+                    <label className="block text-[9px] text-zinc-500 mb-0.5">Responsável</label>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => { setAssignedToMe(true); lastSyncTimeRef.current = null; }}
+                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${assignedToMe ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
+                      >
+                        Meus leads
+                      </button>
+                      <button
+                        onClick={() => { setAssignedToMe(false); lastSyncTimeRef.current = null; }}
+                        className={`flex-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all ${!assignedToMe ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 border border-white/10 hover:text-zinc-300'}`}
+                      >
+                        Todos
+                      </button>
+                    </div>
+                  </div>
+
+                  {availableConnections.length > 1 && (
+                    <div className="mb-2">
+                      <label className="block text-[9px] text-zinc-500 mb-0.5">Conexão (WhatsApp)</label>
+                      <select
+                        value={selectedConnectionId}
+                        onChange={(e) => {
+                          setSelectedConnectionId(e.target.value);
+                          lastSyncTimeRef.current = null;
+                        }}
+                        className="w-full bg-[#0a0a0c] border border-white/10 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+                      >
+                        <option value="">Todas as conexões</option>
+                        {availableConnections.map((conn) => (
+                          <option key={conn.id} value={conn.id}>{conn.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -1325,7 +2115,7 @@ export default function ConversationsPage() {
                       onClick={() => setFilterUnreadOnly(!filterUnreadOnly)}
                       className={`w-full py-1 px-3 rounded text-xs font-semibold border transition-all flex items-center justify-center gap-1.5 ${
                         filterUnreadOnly 
-                          ? "bg-amber-500/10 border-amber-500/30 text-amber-400" 
+                          ? "bg-sky-500/10 border-sky-500/30 text-sky-400" 
                           : "bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-200"
                       }`}
                     >
@@ -1371,21 +2161,25 @@ export default function ConversationsPage() {
                 className={`cursor-pointer transition-all duration-200 group relative ${
                   isSidebarCollapsed ? "p-3 flex justify-center" : "p-3 border-b border-zinc-900"
                 } ${
-                  selectedConvo === convo.id ? "bg-zinc-900 border-l-2 border-l-zinc-400" : "hover:bg-zinc-900/40 border-l-2 border-l-transparent"
+                  selectedConvo === convo.id 
+                    ? "bg-zinc-900 border-l-2 border-l-zinc-400" 
+                    : getUnreadCount(convo) > 0 
+                      ? "bg-sky-500/[0.04] border-l-2 border-l-sky-500 hover:bg-sky-500/10"
+                      : "hover:bg-zinc-900/40 border-l-2 border-l-transparent"
                 }`}
               >
                 {isSidebarCollapsed ? (
                   <div className="relative">
                     <div className="w-10 h-10 rounded-full bg-zinc-800/80 flex items-center justify-center text-[10px] font-bold text-zinc-300 border border-zinc-700/50 overflow-hidden">
                       {convo.avatarUrl ? (
-                        <img src={convo.avatarUrl} alt={convo.name} className="w-full h-full object-cover" />
+                        <SafeAvatar src={convo.avatarUrl} alt={convo.name} className="w-full h-full object-cover" />
                       ) : (
                         convo.initials
                       )}
                     </div>
                     {getUnreadCount(convo) > 0 && (
-                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 rounded-full border-2 border-[#0a0a0c] flex items-center justify-center">
-                        <span className="text-[8px] font-bold text-black">{getUnreadCount(convo)}</span>
+                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-sky-500 rounded-full border-2 border-[#0a0a0c] flex items-center justify-center">
+                        <span className="text-[8px] font-bold text-white">{getUnreadCount(convo)}</span>
                       </div>
                     )}
                   </div>
@@ -1393,16 +2187,16 @@ export default function ConversationsPage() {
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded bg-zinc-950 flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0 border border-zinc-850 overflow-hidden">
                       {convo.avatarUrl ? (
-                        <img src={convo.avatarUrl} alt={convo.name} className="w-full h-full object-cover" />
+                        <SafeAvatar src={convo.avatarUrl} alt={convo.name} className="w-full h-full object-cover" />
                       ) : (
                         convo.initials
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-center mb-0.5">
-                        <h3 className="text-[11px] font-bold text-zinc-300 truncate">{convo.name}</h3>
+                        <h3 className={`text-[11px] truncate ${getUnreadCount(convo) > 0 ? "text-white font-extrabold" : "text-zinc-300 font-bold"}`}>{convo.name}</h3>
                         <div className="text-[8px] font-mono text-zinc-650">
-                          <ConversationTime timestamp={convo.timestamp || ""} fallback={convo.time} />
+                          {/* <ConversationTime timestamp={convo.timestamp || ""} fallback={convo.time} /> */}
                         </div>
                       </div>
                       <div className="flex items-center justify-between mb-1">
@@ -1411,7 +2205,7 @@ export default function ConversationsPage() {
                           <span className="text-[9px] text-zinc-500 font-medium">{convo.stage}</span>
                         </div>
                         {getUnreadCount(convo) > 0 && (
-                          <span className="px-1.5 py-0.5 text-[8px] font-extrabold bg-amber-500 text-black rounded-full min-w-[16px] h-3.5 flex items-center justify-center shrink-0">
+                          <span className="px-1.5 py-0.5 text-[8px] font-extrabold bg-sky-500 text-white rounded-full min-w-[16px] h-3.5 flex items-center justify-center shrink-0">
                             {getUnreadCount(convo)}
                           </span>
                         )}
@@ -1463,14 +2257,22 @@ export default function ConversationsPage() {
                 >
                   <div className="w-8 h-8 rounded bg-zinc-950 flex items-center justify-center border border-zinc-850 shrink-0 overflow-hidden">
                     {activeConvo.avatarUrl ? (
-                      <img src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
+                      <SafeAvatar src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
                     ) : (
                       <span className="text-[10px] font-bold text-zinc-400">{activeConvo.initials}</span>
                     )}
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h2 className="text-xs font-bold truncate text-white">{activeConvo.name}</h2>
+                      <h2 className="text-xs font-bold truncate text-white flex items-center gap-2">
+                        {activeConvo.name}
+                        {isSyncingConvo && (
+                          <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-zinc-800/50 border border-zinc-700/50" title="Atualizando histórico...">
+                            <Loader2 className="w-2.5 h-2.5 text-zinc-400 animate-spin" />
+                            <span className="text-[8px] font-medium text-zinc-400 uppercase tracking-wider">Sync</span>
+                          </div>
+                        )}
+                      </h2>
                       {activeConvo.name === activeConvo.phone && (
                         <button
                           type="button"
@@ -1480,7 +2282,7 @@ export default function ConversationsPage() {
                             setIsEditingContactName(true);
                             setIsContactProfileModalOpen(true);
                           }}
-                          className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-extrabold uppercase bg-amber-500 hover:bg-amber-400 text-black rounded-md transition-all shrink-0 active:scale-95 shadow-sm"
+                          className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-extrabold uppercase bg-zinc-100 hover:bg-white text-black rounded-md transition-all shrink-0 active:scale-95 shadow-sm"
                           title="Salvar Contato no CRM"
                         >
                           <UserPlus className="w-2.5 h-2.5" />
@@ -1495,28 +2297,68 @@ export default function ConversationsPage() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-3 text-zinc-500 shrink-0">
+              <div className="flex items-center gap-2 md:gap-3 text-zinc-500 shrink-0">
                 {!activeConvo.isLead && (
                   <button
                     onClick={async () => {
                       try {
                         const { promoteToLead } = await import('@/actions/crm');
-                        await promoteToLead(activeConvo.contactId);
+                        const result = await promoteToLead(activeConvo.contactId);
                         setConversations(current => current.map(c => 
-                          c.id === activeConvo.id ? { ...c, isLead: true } : c
+                          c.id === activeConvo.id ? { ...c, isLead: true, stage: result.stage } : c
                         ));
                       } catch (err) {
                         console.error(err);
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-black text-xs font-semibold rounded-md hover:bg-zinc-200 transition-colors"
+                    className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-zinc-100 text-black text-xs font-semibold rounded-md hover:bg-white transition-colors"
+                    title="Qualificar Lead"
                   >
                     <Target className="w-3.5 h-3.5" />
-                    Qualificar Lead
+                    <span className="hidden sm:inline">Qualificar Lead</span>
                   </button>
                 )}
-                <Phone className="w-4 h-4" />
-                <MoreVertical className="w-4 h-4" />
+                <button
+                  onClick={() => openTaskModal()}
+                  className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 md:px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                  title="Criar tarefa para este lead"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Tarefa</span>
+                </button>
+                <button
+                  onClick={() => setIsShareContactModalOpen(true)}
+                  className="hidden sm:block p-1.5 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded transition-colors"
+                  title="Compartilhar este contato"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={async () => {
+                    if (confirm("Tem certeza que deseja excluir esta conversa? Esta ação não pode ser desfeita e removerá todas as mensagens e análises.")) {
+                      const success = await deleteConversation(activeConvo.id);
+                      if (success) {
+                        setConversations(current => current.filter(c => c.id !== activeConvo.id));
+                        setSelectedConvo(null);
+                      } else {
+                        showToast("Falha ao excluir conversa. Tente novamente.", "error");
+                      }
+                    }
+                  }}
+                  className="hidden sm:block p-1.5 hover:bg-red-500/10 text-zinc-500 hover:text-red-400 rounded transition-colors"
+                  title="Excluir conversa (Spam/Lixo)"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button 
+                  className="md:hidden p-1.5 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded transition-colors"
+                  onClick={() => setIsAnalysisCollapsed(!isAnalysisCollapsed)}
+                  title="Painel de IA"
+                >
+                  <BrainCircuit className={`w-4 h-4 ${!isAnalysisCollapsed ? 'text-indigo-400' : ''}`} />
+                </button>
+                <Phone className="w-4 h-4 cursor-not-allowed opacity-50 hidden sm:block" />
+                <MoreVertical className="w-4 h-4 hidden sm:block" />
               </div>
             </header>
 
@@ -1545,12 +2387,18 @@ export default function ConversationsPage() {
                           forwardMode={forwardMode}
                           isSelected={selectedMsgIds.has(message.id)}
                           onToggleSelect={toggleSelection}
+                          contactId={activeConvo.contactId}
                           onContextMenu={(e, id) => {
                             e.preventDefault();
                             setContextMenu({ msgId: id, x: e.pageX, y: e.pageY });
                           }}
                           onReactionClick={(id) => setReactionPicker(id)}
                           onStartChat={(phone, name) => handleStartChatWithPhone(phone, name)}
+                          onContactUpdate={(updates) => {
+                            setConversations(current => current.map(c => 
+                              c.id === activeConvo.id ? { ...c, ...updates } : c
+                            ));
+                          }}
                         />
                       </React.Fragment>
                     );
@@ -1565,6 +2413,14 @@ export default function ConversationsPage() {
             </div>
 
             <footer className="p-3 bg-[#0a0a0c] border-t border-border/40 shrink-0 space-y-2 relative">
+              {isSending && uploadProgress > 0 && uploadProgress <= 100 && (
+                <div className="absolute top-0 left-0 w-full h-1 bg-zinc-800 z-50">
+                  <div 
+                    className="h-full bg-amber-500 transition-all duration-300 ease-out" 
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              )}
               {showEmojiPicker && (
                 <div className="absolute bottom-full mb-2 left-4 z-50">
                   <Suspense fallback={<div className="bg-zinc-900 p-8 rounded-xl border border-white/10 text-zinc-500">Carregando emojis...</div>}>
@@ -1579,30 +2435,30 @@ export default function ConversationsPage() {
               
               {isRecording ? (
                 <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3 animate-pulse">
-                  <div className="flex items-center gap-2 text-red-500">
-                    <div className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                  <div className="flex items-center gap-2 text-rose-500">
+                    <div className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                     <span className="text-xs font-semibold uppercase tracking-wider">Gravando: {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}</span>
                   </div>
                   <div className="flex-1" />
                   <button 
                     onClick={() => stopRecording(true)}
-                    className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
+                    className="p-2 text-zinc-500 hover:text-rose-400 transition-colors"
                     title="Cancelar"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                   <button 
                     onClick={() => stopRecording(false)}
-                    className="flex items-center gap-2 bg-white text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-colors shadow-lg"
+                    className="flex items-center gap-2 bg-zinc-100 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-white transition-colors shadow-lg"
                   >
                     <Check className="w-4 h-4" /> Enviar
                   </button>
                 </div>
               ) : editingMsg ? (
-                <div className="flex flex-col gap-2 bg-white/5 border border-amber-500/30 rounded-xl p-3">
+                <div className="flex flex-col gap-2 bg-white/5 border border-rose-500/30 rounded-xl p-3">
 
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">Editando Mensagem</span>
+                    <span className="text-[10px] text-rose-500 font-bold uppercase tracking-widest">Editando Mensagem</span>
                     <button onClick={() => setEditingMsg(null)} className="text-zinc-500 hover:text-white">
                       <X className="w-3 h-3" />
                     </button>
@@ -1616,48 +2472,174 @@ export default function ConversationsPage() {
                     />
                     <button 
                       onClick={handleUpdateMessage}
-                      className="bg-amber-500 text-black p-2 rounded-lg hover:bg-amber-400"
+                      className="bg-zinc-100 text-black p-2 rounded-lg hover:bg-white"
                     >
                       <Check className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className={`p-2 transition-colors ${showEmojiPicker ? "text-amber-500" : "text-zinc-500 hover:text-white"}`}
-                  >
-                    <Smile className="w-5 h-5" />
-                  </button>
-                  
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-zinc-500 hover:text-white transition-colors"
-                  >
-                    <Paperclip className="w-5 h-5" />
-                  </button>
+                <div className="flex items-center gap-2 md:gap-3">
+                  {/* Plus Button for Mobile */}
+                  <div className="relative md:hidden">
+                    <button
+                      onClick={() => setShowMobileActions(!showMobileActions)}
+                      className={`p-2 rounded-full transition-colors ${showMobileActions ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white"}`}
+                    >
+                      <Plus className={`w-5 h-5 transition-transform ${showMobileActions ? "rotate-45" : ""}`} />
+                    </button>
+                    {/* Mobile Submenu Popover */}
+                    {showMobileActions && (
+                      <div className="absolute bottom-full left-0 mb-2 w-max bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 p-1 flex flex-col gap-1">
+                        <button 
+                          onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowMobileActions(false); }}
+                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                        >
+                          <Smile className="w-4 h-4" /> Emoji
+                        </button>
+                        <button 
+                          onClick={() => { setIsQuickRepliesModalOpen(true); setShowMobileActions(false); }}
+                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-amber-400 hover:bg-zinc-800 rounded-md transition-colors"
+                        >
+                          <Zap className="w-4 h-4" /> Respostas Rápidas
+                        </button>
+                        <button 
+                          onClick={() => { fileInputRef.current?.click(); setShowMobileActions(false); }}
+                          className="flex items-center gap-2 p-2 px-3 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                        >
+                          <Paperclip className="w-4 h-4" /> Anexo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Desktop Actions */}
+                  <div className="hidden md:flex items-center gap-3">
+                    <button 
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      className={`p-2 transition-colors ${showEmojiPicker ? "text-rose-500" : "text-zinc-500 hover:text-white"}`}
+                      title="Emoji"
+                    >
+                      <Smile className="w-5 h-5" />
+                    </button>
+                    
+                    <button 
+                      onClick={() => setIsQuickRepliesModalOpen(true)}
+                      className="p-2 text-zinc-500 hover:text-amber-400 transition-colors"
+                      title="Respostas Rápidas"
+                    >
+                      <Zap className="w-5 h-5" />
+                    </button>
+                    
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 text-zinc-500 hover:text-white transition-colors"
+                    >
+                      <Paperclip className="w-5 h-5" />
+                    </button>
+                  </div>
                   <input
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileUpload}
                     className="hidden"
-                    multiple
                   />
                   
                   <div className="flex-1 relative">
-                    <input
-                      type="text"
+                    {/* Quick Replies Dropdown */}
+                    {showQuickReplyDropdown && filteredQuickReplies.length > 0 && (
+                      <div 
+                        ref={quickReplyDropdownRef}
+                        className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl z-50 py-1"
+                      >
+                        {filteredQuickReplies.map((qr, idx) => (
+                          <div
+                            key={qr.id}
+                            onClick={() => {
+                              const lastSlashIndex = draftMessage.lastIndexOf('/');
+                              if (lastSlashIndex !== -1) {
+                                const newMsg = draftMessage.substring(0, lastSlashIndex) + qr.content + ' ';
+                                setDraftMessage(newMsg);
+                              }
+                              setShowQuickReplyDropdown(false);
+                              textareaRef.current?.focus();
+                            }}
+                            className={`px-3 py-2 cursor-pointer transition-colors ${
+                              idx === activeQuickReplyIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                /{qr.shortcut}
+                              </span>
+                              <span className="text-xs font-semibold text-zinc-200">{qr.title}</span>
+                            </div>
+                            <p className="text-[10px] text-zinc-500 line-clamp-1">{qr.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      ref={textareaRef}
                       placeholder="Escreva sua mensagem..."
                       value={draftMessage}
-                      onChange={(e) => setDraftMessage(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setDraftMessage(val);
+                        
+                        const lastSlashIndex = val.lastIndexOf('/');
+                        if (lastSlashIndex !== -1 && (lastSlashIndex === 0 || val[lastSlashIndex - 1] === ' ' || val[lastSlashIndex - 1] === '\n')) {
+                          const query = val.substring(lastSlashIndex + 1).toLowerCase();
+                          if (!query.includes(' ') && !query.includes('\n')) {
+                            const filtered = quickReplies.filter(qr => 
+                              qr.shortcut.includes(query) || qr.title.toLowerCase().includes(query)
+                            );
+                            if (filtered.length > 0) {
+                              setFilteredQuickReplies(filtered);
+                              setShowQuickReplyDropdown(true);
+                              setActiveQuickReplyIndex(0);
+                              return;
+                            }
+                          }
+                        }
+                        setShowQuickReplyDropdown(false);
+                      }}
                       onKeyDown={(e) => {
+                        if (showQuickReplyDropdown && filteredQuickReplies.length > 0) {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setActiveQuickReplyIndex(prev => Math.min(prev + 1, filteredQuickReplies.length - 1));
+                            return;
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setActiveQuickReplyIndex(prev => Math.max(prev - 1, 0));
+                            return;
+                          }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const qr = filteredQuickReplies[activeQuickReplyIndex];
+                            const lastSlashIndex = draftMessage.lastIndexOf('/');
+                            if (lastSlashIndex !== -1) {
+                              const newMsg = draftMessage.substring(0, lastSlashIndex) + qr.content + ' ';
+                              setDraftMessage(newMsg);
+                            }
+                            setShowQuickReplyDropdown(false);
+                            return;
+                          }
+                          if (e.key === 'Escape') {
+                            setShowQuickReplyDropdown(false);
+                            return;
+                          }
+                        }
+
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
                           handleSendMessage();
                         }
                       }}
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/20 transition-all resize-none overflow-y-auto min-h-[44px] max-h-[160px]"
+                      rows={1}
                     />
                   </div>
 
@@ -1671,7 +2653,7 @@ export default function ConversationsPage() {
                   <button 
                     onClick={handleSendMessage}
                     disabled={!draftMessage.trim() || isSending}
-                    className="p-2.5 bg-white text-black rounded-xl hover:bg-zinc-200 disabled:opacity-50 disabled:hover:bg-white transition-all shadow-lg"
+                    className="p-2.5 bg-zinc-100 text-black rounded-xl hover:bg-white disabled:opacity-50 disabled:hover:bg-zinc-100 transition-all shadow-lg"
                   >
                     <Send className="w-5 h-5" />
                   </button>
@@ -1690,7 +2672,7 @@ export default function ConversationsPage() {
                 <div className="w-20 h-20 rounded-[2rem] bg-gradient-to-br from-amber-500/20 to-amber-500/5 flex items-center justify-center mx-auto mb-6 border border-amber-500/20 shadow-[0_0_40px_-10px_rgba(245,158,11,0.2)]">
                   <MessageSquare className="w-10 h-10 text-amber-500" />
                 </div>
-                <h3 className="text-2xl font-bold text-white tracking-tight">Nexus Copilot</h3>
+                <h3 className="text-2xl font-bold text-white tracking-tight">Sales Arcaffo</h3>
                 <p className="text-zinc-400 max-w-sm mx-auto">Sua central de atendimento avançada. Escolha uma conversa ao lado para começar.</p>
               </div>
 
@@ -1699,11 +2681,11 @@ export default function ConversationsPage() {
                   <div className="text-2xl font-bold text-white mb-1">{conversations.length}</div>
                   <div className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">Total</div>
                 </div>
-                <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl flex flex-col items-center justify-center text-center">
-                  <div className="text-2xl font-bold text-amber-500 mb-1">
+                <div className="bg-sky-500/5 border border-sky-500/10 p-4 rounded-2xl flex flex-col items-center justify-center text-center">
+                  <div className="text-2xl font-bold text-sky-500 mb-1">
                     {conversations.reduce((acc, c) => acc + (getUnreadCount(c) > 0 ? 1 : 0), 0)}
                   </div>
-                  <div className="text-[10px] uppercase font-bold tracking-wider text-amber-500/70">Não Lidas</div>
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-sky-500/70">Não Lidas</div>
                 </div>
                 <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl flex flex-col items-center justify-center text-center">
                   <div className="text-2xl font-bold text-white mb-1">
@@ -1716,7 +2698,7 @@ export default function ConversationsPage() {
               <div className="flex gap-3 justify-center pt-4">
                 <button 
                   onClick={() => setIsNewChatModalOpen(true)}
-                  className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black font-semibold rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95"
+                  className="px-6 py-3 bg-zinc-100 hover:bg-white text-black font-semibold rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95"
                 >
                   <UserPlus className="w-4 h-4" />
                   Iniciar Nova Conversa
@@ -1731,7 +2713,7 @@ export default function ConversationsPage() {
       <section 
         className={`bg-[#0a0a0c] flex flex-col shrink-0 transition-all duration-300 z-20 ${
           isAnalysisCollapsed 
-            ? "w-12 border-l border-white/[0.06] " 
+            ? "w-0 md:w-12 overflow-hidden md:border-l border-white/[0.06] " 
             : "fixed inset-y-0 right-0 w-full md:relative md:w-[420px] z-40 border-l border-white/10 md:border-white/[0.06] shadow-2xl md:shadow-none"
         }`}
       >
@@ -1740,7 +2722,7 @@ export default function ConversationsPage() {
             <div>
               <div className="flex items-center gap-2 mb-0.5">
                 <BrainCircuit className="w-4 h-4 text-zinc-400" />
-                <h2 className="font-semibold text-sm tracking-tight text-zinc-200">Sales Noir</h2>
+                <h2 className="font-semibold text-sm tracking-tight text-zinc-200">Sales Arcaffo</h2>
               </div>
               <p className="text-[11px] text-zinc-600">Operação tática da conversa</p>
             </div>
@@ -1754,275 +2736,527 @@ export default function ConversationsPage() {
         </div>
 
         {activeConvo && !isAnalysisCollapsed ? (
-          <div className="p-5 flex-1 overflow-y-auto space-y-5 no-scrollbar">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <MetaCard label="Mensagens" value={String(activeConvo.messageCount)} />
-                <MetaCard label="Telefone" value={activeConvo.phone} />
-              </div>
+          <div className="flex flex-col h-full overflow-hidden">
+            <div className="flex border-b border-white/[0.06] p-2 gap-1 bg-[#0a0a0c] shrink-0">
+              <button 
+                onClick={() => setTacticalTab("lead")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "lead" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+              >
+                Lead
+              </button>
+              <button 
+                onClick={() => setTacticalTab("ia")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "ia" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+              >
+                Análise IA
+              </button>
+              <button 
+                onClick={() => setTacticalTab("tasks")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "tasks" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+              >
+                Tarefas
+              </button>
+              <button 
+                onClick={() => setTacticalTab("acoes")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${tacticalTab === "acoes" ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}
+              >
+                Ações
+              </button>
+            </div>
 
-              {/* Temperatura Híbrida (IA + Manual) */}
-              <div className="space-y-2">
-                <SectionTitle>Temperatura do Lead</SectionTitle>
-                <div className="flex gap-2">
-                  {(["HOT", "WARM", "COLD"] as const).map(temp => (
-                    <button
-                      key={temp}
-                      disabled={isSavingTemp}
-                      onClick={() => handleSaveTemp(temp)}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
-                        activeConvo.status.toUpperCase() === temp
-                          ? temp === "HOT" ? "text-amber-400 bg-amber-500/10 border-amber-500/20" : temp === "WARM" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20" : "text-blue-400 bg-blue-500/10 border-blue-500/20"
-                          : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10"
-                      }`}
-                    >
-                      {temp === "HOT" ? "🔥 Quente" : temp === "WARM" ? "☀️ Morno" : "❄️ Frio"}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              {tacticalTab === "lead" && (
+                <div className="space-y-5">
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <SectionTitle>Resumo comercial</SectionTitle>
+                      </div>
+                      <span className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${
+                        activeConvo.status === "hot"
+                          ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
+                          : activeConvo.status === "warm"
+                            ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
+                            : "border-indigo-500/20 bg-indigo-500/10 text-indigo-400"
+                      }`}>
+                        {activeConvo.status === "hot" ? "Quente" : activeConvo.status === "warm" ? "Morno" : "Frio"}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-[11px] text-zinc-500">
+                      {/* Empresa */}
+                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Empresa</span>
+                        {isEditingCompany ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <input
+                              autoFocus
+                              type="text"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              value={editedCompanyValue}
+                              onChange={e => setEditedCompanyValue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") {
+                                  setIsEditingCompany(false);
+                                  handleSaveContactField('company', editedCompanyValue);
+                                }
+                                if (e.key === "Escape") setIsEditingCompany(false);
+                              }}
+                              onBlur={() => {
+                                setIsEditingCompany(false);
+                                handleSaveContactField('company', editedCompanyValue);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className="block truncate text-zinc-300">{activeConvo.company || "Não informada"}</span>
+                            <button
+                              onClick={() => {
+                                setEditedCompanyValue(activeConvo.company || "");
+                                setIsEditingCompany(true);
+                              }}
+                              className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
-              {/* Estágio Comercial */}
-              <div className="space-y-2">
-                <SectionTitle>Estágio Comercial</SectionTitle>
-                <div className="flex gap-2">
-                  <select
-                    value={draftStage}
-                    onChange={(event) => setDraftStage(event.target.value)}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                  >
-                    {pipelineStages.map((stage) => (
-                      <option key={stage.id} value={stage.name}>
-                        {stage.name}
-                      </option>
-                    ))}
-                    {draftStage && !pipelineStages.some(s => s.name === draftStage) && (
-                      <option value={draftStage}>
-                        {getStageDisplay(draftStage)}
-                      </option>
-                    )}
-                  </select>
-                  <button
-                    onClick={() => void handleSaveStage()}
-                    disabled={isSavingStage || draftStage === activeConvo.stageKey}
-                    className="px-3 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
-                  >
-                    <Save className="w-4 h-4" />
-                    {isSavingStage ? "Salvando" : "Salvar"}
-                  </button>
-                </div>
-              </div>
+                      {/* Email */}
+                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">E-mail</span>
+                        {isEditingEmail ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <input
+                              autoFocus
+                              type="email"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              value={editedEmailValue}
+                              onChange={e => setEditedEmailValue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") {
+                                  setIsEditingEmail(false);
+                                  handleSaveContactField('email', editedEmailValue);
+                                }
+                                if (e.key === "Escape") setIsEditingEmail(false);
+                              }}
+                              onBlur={() => {
+                                setIsEditingEmail(false);
+                                handleSaveContactField('email', editedEmailValue);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className="block truncate text-zinc-300">{activeConvo.email || "Não informado"}</span>
+                            <button
+                              onClick={() => {
+                                setEditedEmailValue(activeConvo.email || "");
+                                setIsEditingEmail(true);
+                              }}
+                              className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
-              {/* Produto de Interesse */}
-              <div className="space-y-2">
-                <SectionTitle>Produto de Interesse</SectionTitle>
-                <select
-                  value={draftProduct}
-                  disabled={isSavingProduct}
-                  onChange={(e) => handleSaveProduct(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                >
-                  <option value="">Nenhum / Não definido</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} {p.price ? `- R$ ${p.price}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Origem do Lead */}
-              <div className="space-y-2">
-                <SectionTitle>Origem do Lead</SectionTitle>
-                <select
-                  value={draftOrigin}
-                  disabled={isSavingOrigin}
-                  onChange={(e) => handleSaveOrigin(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                >
-                  <option value="">Não informado</option>
-                  {leadOrigins.map((o) => (
-                    <option key={o.id} value={o.name}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <SectionTitle>Anotações do Lead</SectionTitle>
-                  {notesDraft !== (activeConvo.notes || "") && (
-                    <button 
-                      onClick={handleSaveNotes}
-                      disabled={isSavingNotes}
-                      className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors font-semibold"
-                    >
-                      <Save className="w-3 h-3" />
-                      {isSavingNotes ? "Salvando..." : "Salvar"}
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  value={notesDraft}
-                  onChange={(e) => setNotesDraft(e.target.value)}
-                  placeholder="Registre insights, dores ou observações sobre o lead..."
-                  className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg p-3 text-sm text-zinc-400 min-h-28 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-white/10 placeholder:text-zinc-700 resize-none transition-all"
-                />
-              </div>
-
-              {/* Agendamento de Mensagens */}
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setIsScheduleOpen(!isScheduleOpen)}
-                  className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-lg text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/10 transition-all flex items-center justify-between cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    Agendar Mensagens
-                  </span>
-                  <span className="text-[10px] text-zinc-500">{isScheduleOpen ? "▼" : "▲"}</span>
-                </button>
-
-                {isScheduleOpen && (
-                  <div className="p-3 bg-white/[0.02] border border-white/5 rounded-lg space-y-4 animate-in fade-in duration-200">
-                    <p className="text-[10px] text-zinc-500">
-                      Escolha a data e a hora globais. Você pode agendar várias mensagens para enviar em sequência a partir desse horário.
-                    </p>
-
-                    <div className="flex flex-col gap-2 bg-[#0c0c0e] p-3 rounded-lg border border-white/5">
-                      <label className="text-[9px] uppercase font-bold tracking-wider text-amber-500 block">
-                        Data e Hora do Disparo Inicial
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="date"
-                          value={scheduleGlobalDate}
-                          onChange={(e) => setScheduleGlobalDate(e.target.value)}
-                          className="flex-1 bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
-                        />
-                        <input
-                          type="time"
-                          value={scheduleGlobalTime}
-                          onChange={(e) => setScheduleGlobalTime(e.target.value)}
-                          className="w-[100px] bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
-                        />
+                      {/* Area de Interesse */}
+                      <div className="rounded-lg bg-black/20 p-2 group relative">
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Área de Interesse</span>
+                        {isEditingInterestArea ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <input
+                              autoFocus
+                              type="text"
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-200 outline-none focus:border-indigo-500"
+                              value={editedInterestAreaValue}
+                              onChange={e => setEditedInterestAreaValue(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === "Enter") {
+                                  setIsEditingInterestArea(false);
+                                  handleSaveContactField('interestArea', editedInterestAreaValue);
+                                }
+                                if (e.key === "Escape") setIsEditingInterestArea(false);
+                              }}
+                              onBlur={() => {
+                                setIsEditingInterestArea(false);
+                                handleSaveContactField('interestArea', editedInterestAreaValue);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="mt-1 flex items-center justify-between">
+                            <span className="block truncate text-zinc-300">{activeConvo.interestArea || "Não informada"}</span>
+                            <button
+                              onClick={() => {
+                                setEditedInterestAreaValue(activeConvo.interestArea || "");
+                                setIsEditingInterestArea(true);
+                              }}
+                              className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="space-y-4">
-                      {scheduledMessages.map((item, index) => (
-                        <div key={item.id} className="space-y-2 pb-4 border-b border-white/5 relative">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[9px] uppercase font-bold tracking-wider text-zinc-500 block">
-                              Mensagem {index + 1}
-                            </label>
-                            {scheduledMessages.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => setScheduledMessages(prev => prev.filter(i => i.id !== item.id))}
-                                className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
-                              >
-                                Remover
-                              </button>
-                            )}
-                          </div>
-                          
-                          <textarea
-                            value={item.content}
-                            onChange={(e) => {
-                              const newItems = [...scheduledMessages];
-                              newItems[index].content = e.target.value;
-                              setScheduledMessages(newItems);
-                            }}
-                            placeholder="Escreva a mensagem..."
-                            className="w-full bg-[#0a0a0c] border border-white/10 rounded p-2 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-[60px] resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600"
-                          />
-                        </div>
+                  {/* Temperatura Híbrida (IA + Manual) */}
+                  <div className="space-y-2">
+                    <SectionTitle>Temperatura do Lead</SectionTitle>
+                    <div className="flex gap-2">
+                      {(["HOT", "WARM", "COLD"] as const).map(temp => (
+                        <button
+                          key={temp}
+                          disabled={isSavingTemp}
+                          onClick={() => handleSaveTemp(temp)}
+                          className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                            activeConvo.status.toUpperCase() === temp
+                              ? temp === "HOT" ? "text-rose-400 bg-rose-500/10 border-rose-500/20" : temp === "WARM" ? "text-amber-500 bg-amber-500/10 border-amber-500/20" : "text-indigo-400 bg-indigo-500/10 border-indigo-500/20"
+                              : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10"
+                          }`}
+                        >
+                          {temp === "HOT" ? "🔥 Quente" : temp === "WARM" ? "☀️ Morno" : "❄️ Frio"}
+                        </button>
                       ))}
-                      
-                      <button
-                        type="button"
-                        onClick={() => setScheduledMessages([...scheduledMessages, { id: Date.now().toString(), content: "" }])}
-                        className="w-full py-1.5 bg-white/5 border border-white/10 border-dashed rounded text-[10px] text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition-colors flex items-center justify-center gap-1"
+                    </div>
+                  </div>
+
+                  {/* Estágio Comercial */}
+                  <div className="space-y-2">
+                    <SectionTitle>Estágio Comercial</SectionTitle>
+                    <div className="flex gap-2">
+                      <select
+                        value={draftStage}
+                        onChange={(event) => setDraftStage(event.target.value)}
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                       >
-                        <Plus className="w-3 h-3" /> Adicionar Mensagem
+                        {pipelineStages.map((stage) => (
+                          <option key={stage.id} value={stage.name}>
+                            {stage.name}
+                          </option>
+                        ))}
+                        {draftStage && !pipelineStages.some(s => s.name === draftStage) && (
+                          <option value={draftStage}>
+                            {getStageDisplay(draftStage)}
+                          </option>
+                        )}
+                      </select>
+                      <button
+                        onClick={() => void handleSaveStage()}
+                        disabled={isSavingStage || draftStage === activeConvo.stageKey}
+                        className="px-3 py-2 bg-zinc-100 text-black rounded-lg text-sm font-semibold hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" />
+                        {isSavingStage ? "Salvando" : "Salvar"}
                       </button>
                     </div>
+                  </div>
 
-                    {pendingSchedules.length > 0 && (
-                      <div className="pt-2">
-                        <label className="text-[9px] uppercase font-bold tracking-wider text-emerald-500 block mb-2">Mensagens Pendentes ({pendingSchedules.length})</label>
-                        <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                          {pendingSchedules.map((schedule) => (
-                            <div key={schedule.id} className="p-2 bg-black/20 rounded border border-white/5 flex flex-col gap-1.5">
-                              <p className="text-[10px] text-zinc-300 line-clamp-2">{schedule.content}</p>
-                              <div className="flex items-center justify-between">
-                                <span className="text-[9px] text-zinc-500">
-                                  {new Date(schedule.scheduledFor).toLocaleString('pt-BR')}
-                                </span>
-                                <button
-                                  onClick={() => handleCancelSchedule(schedule.id)}
-                                  className="text-[9px] text-red-400 hover:text-red-300"
-                                >
-                                  Cancelar
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                  {/* Orçamento / Proposta */}
+                  <Suspense fallback={<div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-xs text-zinc-500">Carregando orçamento...</div>}>
+                    <QuoteEditor 
+                      contactId={activeConvo.contactId}
+                      contactProducts={activeConvo.contactProducts || []}
+                      catalogProducts={products}
+                      onUpdate={async () => {
+                        try {
+                          const resultData = await getConversations(selectedConvo ?? undefined);
+                          setConversations(resultData.conversations);
+                        } catch(e) { console.error(e) }
+                      }}
+                    />
+                  </Suspense>
+
+                  {/* Origem do Lead */}
+                  <div className="space-y-2">
+                    <SectionTitle>Origem do Lead</SectionTitle>
+                    <select
+                      value={draftOrigin}
+                      disabled={isSavingOrigin}
+                      onChange={(e) => handleSaveOrigin(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    >
+                      <option value="">Não informado</option>
+                      {leadOrigins.map((o) => (
+                        <option key={o.id} value={o.name}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <SectionTitle>Anotações do Lead</SectionTitle>
+                      {notesDraft !== (activeConvo.notes || "") && (
+                        <button 
+                          onClick={handleSaveNotes}
+                          disabled={isSavingNotes}
+                          className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors font-semibold"
+                        >
+                          <Save className="w-3 h-3" />
+                          {isSavingNotes ? "Salvando..." : "Salvar"}
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={notesDraft}
+                      onChange={(e) => setNotesDraft(e.target.value)}
+                      placeholder="Registre insights, dores ou observações sobre o lead..."
+                      className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg p-3 text-sm text-zinc-400 min-h-28 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-white/10 placeholder:text-zinc-700 resize-none transition-all"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {tacticalTab === "ia" && (
+                <div className="space-y-5 h-full">
+                  {!analysisResult && !isAnalyzing ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-60 py-8">
+                      <div className="w-16 h-16 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center">
+                        <Target className="w-7 h-7 text-zinc-700" />
+                      </div>
+                      <p className="text-xs text-zinc-600 max-w-[220px] leading-relaxed">
+                        Use a última análise salva ou gere uma nova leitura estratégica da negociação.
+                      </p>
+                    </div>
+                  ) : isAnalyzing ? (
+                    <div className="flex flex-col items-center justify-center h-full space-y-6 py-8">
+                      <div className="relative">
+                        <div className="w-14 h-14 border-2 border-zinc-800 border-t-zinc-400 rounded-full animate-spin" />
+                        <BrainCircuit className="w-5 h-5 text-zinc-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                      </div>
+                      <div className="text-center space-y-1.5">
+                        <p className="text-sm font-medium animate-pulse text-zinc-300">Analisando conversa...</p>
+                        <p className="text-[11px] text-zinc-600">Cruzando contexto, áudio e histórico comercial.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {activeConvo.latestAnalysis && (
+                        <div className="text-[11px] text-zinc-500">
+                          Última análise salva em {new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(activeConvo.latestAnalysis.createdAt))}
                         </div>
+                      )}
+                      {analysisResult ? (
+                        <AnalysisPanel
+                          result={analysisResult}
+                          analysisId={activeConvo.latestAnalysis?.id}
+                          onCopy={handleCopy}
+                          copiedId={copiedId}
+                          onCreateTask={(title, description, priority, dueAt) => openTaskModal({ title, description, priority, dueAt, source: "AI", analysisId: activeConvo.latestAnalysis?.id || null })}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {tacticalTab === "tasks" && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => openTaskModal()}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2 text-xs font-bold text-black transition-colors hover:bg-emerald-400"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Nova tarefa para este lead
+                  </button>
+
+                  <div className="space-y-2">
+                    <SectionTitle>Tarefas abertas</SectionTitle>
+                    {isLoadingLeadTasks ? (
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-center text-xs text-zinc-500">Carregando tarefas...</div>
+                    ) : leadTasks.filter((task) => task.status !== "DONE").length > 0 ? (
+                      leadTasks.filter((task) => task.status !== "DONE").map((task) => (
+                        <TaskRow key={task.id} task={task} onToggle={() => void handleToggleLeadTask(task)} />
+                      ))
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-5 text-center">
+                        <CheckCircle2 className="mx-auto mb-2 h-5 w-5 text-zinc-700" />
+                        <p className="text-xs font-medium text-zinc-500">Nenhuma tarefa aberta para este lead.</p>
+                        <p className="mt-1 text-[11px] text-zinc-700">Crie uma próxima ação para não deixar a negociação parada.</p>
                       </div>
                     )}
+                  </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveSchedule()}
-                      disabled={isSavingSchedule || !scheduleGlobalDate || !scheduleGlobalTime || scheduledMessages.every(i => !i.content)}
-                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      {isSavingSchedule ? "Salvando..." : "Salvar Agendamento"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-white/5 space-y-5">
-              {!analysisResult && !isAnalyzing ? (
-                <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-60 py-8">
-                  <div className="w-16 h-16 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center">
-                    <Target className="w-7 h-7 text-zinc-700" />
-                  </div>
-                  <p className="text-xs text-zinc-600 max-w-[220px] leading-relaxed">
-                    Use a última análise salva ou gere uma nova leitura estratégica da negociação.
-                  </p>
-                </div>
-              ) : isAnalyzing ? (
-                <div className="flex flex-col items-center justify-center h-full space-y-6 py-8">
-                  <div className="relative">
-                    <div className="w-14 h-14 border-2 border-zinc-800 border-t-zinc-400 rounded-full animate-spin" />
-                    <BrainCircuit className="w-5 h-5 text-zinc-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-                  </div>
-                  <div className="text-center space-y-1.5">
-                    <p className="text-sm font-medium animate-pulse text-zinc-300">Analisando conversa...</p>
-                    <p className="text-[11px] text-zinc-600">Cruzando contexto, áudio e histórico comercial.</p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {activeConvo.latestAnalysis && (
-                    <div className="text-[11px] text-zinc-500">
-                      Última análise salva em {new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(activeConvo.latestAnalysis.createdAt))}
+                  {leadTasks.filter((task) => task.status === "DONE").length > 0 && (
+                    <div className="space-y-2 border-t border-white/5 pt-4">
+                      <SectionTitle>Concluídas recentemente</SectionTitle>
+                      {leadTasks.filter((task) => task.status === "DONE").slice(0, 3).map((task) => (
+                        <TaskRow key={task.id} task={task} onToggle={() => void handleToggleLeadTask(task)} />
+                      ))}
                     </div>
                   )}
-                  {analysisResult ? <AnalysisPanel result={analysisResult} analysisId={activeConvo.latestAnalysis?.id} onCopy={handleCopy} copiedId={copiedId} /> : null}
-                </>
+                </div>
+              )}
+
+              {tacticalTab === "acoes" && (
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <SectionTitle>Próxima ação</SectionTitle>
+                    <button
+                      onClick={() => openTaskModal()}
+                      className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors border border-emerald-500/20 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Criar tarefa vinculada ao lead
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <SectionTitle>Reunião</SectionTitle>
+                    <button
+                      onClick={() => setMeetingModalOpen(true)}
+                      className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-lg shadow-indigo-500/20 cursor-pointer"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      Agendar Reunião
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <SectionTitle>Eventos</SectionTitle>
+                    <button
+                      onClick={() => setInviteMasterclassLeadId(activeConvo.contactId)}
+                      className="w-full py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/20 cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Convidar para MASTERCLASS
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <SectionTitle>Agendamento de Mensagens</SectionTitle>
+                    <div className="p-3 bg-white/[0.02] border border-white/5 rounded-lg space-y-4">
+                      <p className="text-[10px] text-zinc-500">
+                        Escolha a data e a hora globais. Você pode agendar várias mensagens para enviar em sequência a partir desse horário.
+                      </p>
+
+                      <div className="flex flex-col gap-2 bg-[#0c0c0e] p-3 rounded-lg border border-white/5">
+                        <label className="text-[9px] uppercase font-bold tracking-wider text-sky-500 block">
+                          Data e Hora do Disparo Inicial
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            value={scheduleGlobalDate}
+                            onChange={(e) => setScheduleGlobalDate(e.target.value)}
+                            className="flex-1 bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                          />
+                          <input
+                            type="time"
+                            value={scheduleGlobalTime}
+                            onChange={(e) => setScheduleGlobalTime(e.target.value)}
+                            className="w-[100px] bg-[#0a0a0c] border border-white/10 rounded px-2 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {scheduledMessages.map((item, index) => (
+                          <div key={item.id} className="space-y-2 pb-4 border-b border-white/5 relative">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[9px] uppercase font-bold tracking-wider text-zinc-500 block">
+                                Mensagem {index + 1}
+                              </label>
+                              {scheduledMessages.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setScheduledMessages(prev => prev.filter(i => i.id !== item.id))}
+                                  className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
+                                >
+                                  Remover
+                                </button>
+                              )}
+                            </div>
+                            
+                            <textarea
+                              value={item.content}
+                              onChange={(e) => {
+                                const newItems = [...scheduledMessages];
+                                newItems[index].content = e.target.value;
+                                setScheduledMessages(newItems);
+                              }}
+                              placeholder="Escreva a mensagem..."
+                              className="w-full bg-[#0a0a0c] border border-white/10 rounded p-2 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-[60px] resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                            />
+                          </div>
+                        ))}
+                        
+                        <button
+                          type="button"
+                          onClick={() => setScheduledMessages([...scheduledMessages, { id: Date.now().toString(), content: "" }])}
+                          className="w-full py-1.5 bg-white/5 border border-white/10 border-dashed rounded text-[10px] text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition-colors flex items-center justify-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> Adicionar Mensagem
+                        </button>
+                      </div>
+
+                      {pendingSchedules.length > 0 && (
+                        <div className="pt-2">
+                          <label className="text-[9px] uppercase font-bold tracking-wider text-emerald-500 block mb-2">Mensagens Pendentes ({pendingSchedules.length})</label>
+                          <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                            {pendingSchedules.map((schedule) => (
+                              <div key={schedule.id} className="p-2 bg-black/20 rounded border border-white/5 flex flex-col gap-1.5">
+                                <p className="text-[10px] text-zinc-300 line-clamp-2">{schedule.content}</p>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[9px] text-zinc-500">
+                                    {new Date(schedule.scheduledFor).toLocaleString('pt-BR')}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCancelSchedule(schedule.id)}
+                                    className="text-[9px] text-red-400 hover:text-red-300"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveSchedule()}
+                        disabled={isSavingSchedule || !scheduleGlobalDate || !scheduleGlobalTime || scheduledMessages.every(i => !i.content)}
+                        className="w-full py-2 bg-zinc-100 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {isSavingSchedule ? "Salvando..." : "Salvar Agendamento"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
+
+            {tacticalTab === "ia" && !isAnalysisCollapsed && (
+              <div className="p-4 border-t border-white/[0.06] space-y-3 shrink-0">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold block">Direcionamento para a IA</label>
+                  <textarea
+                    value={sellerContext}
+                    onChange={(e) => setSellerContext(e.target.value)}
+                    placeholder="Qual a situação atual do lead para eu ajudar? (Opcional)"
+                    className="w-full bg-[#0a0a0c] border border-white/10 rounded-lg p-2.5 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-16 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600 transition-all"
+                  />
+                </div>
+                <button
+                  onClick={() => void handleAnalyze()}
+                  disabled={!selectedConvo || isAnalyzing}
+                  className="w-full py-3 px-4 bg-zinc-100 hover:bg-white text-black rounded-lg font-semibold text-sm transition-all shadow-[0_0_20px_rgba(255,255,255,0.06)] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98]"
+                >
+                  <Zap className="w-4 h-4" />
+                  {isAnalyzing ? "Processando..." : "Analisar Negociação"}
+                </button>
+              </div>
+            )}
           </div>
         ) : isAnalysisCollapsed && activeConvo ? (
           <div className="flex-1 flex flex-col items-center py-8">
@@ -2034,28 +3268,6 @@ export default function ConversationsPage() {
             </button>
           </div>
         ) : null}
-
-        {!isAnalysisCollapsed && (
-          <div className="p-4 border-t border-white/[0.06] space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold block">Direcionamento para a IA</label>
-              <textarea
-                value={sellerContext}
-                onChange={(e) => setSellerContext(e.target.value)}
-                placeholder="Qual a situação atual do lead para eu ajudar? (Opcional)"
-                className="w-full bg-[#0a0a0c] border border-white/10 rounded-lg p-2.5 text-xs text-zinc-300 placeholder:text-zinc-700 min-h-16 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-600 transition-all"
-              />
-            </div>
-            <button
-              onClick={() => void handleAnalyze()}
-              disabled={!selectedConvo || isAnalyzing}
-              className="w-full py-3 px-4 bg-white hover:bg-zinc-200 text-black rounded-lg font-semibold text-sm transition-all shadow-[0_0_20px_rgba(255,255,255,0.06)] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98]"
-            >
-              <Zap className="w-4 h-4" />
-              {isAnalyzing ? "Processando..." : "Analisar Negociação"}
-            </button>
-          </div>
-        )}
       </section>
 
       {/* Floating UI: Context Menu */}
@@ -2115,7 +3327,7 @@ export default function ConversationsPage() {
           <button 
             onClick={() => setIsForwardModalOpen(true)}
             disabled={selectedMsgIds.size === 0}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+            className="flex items-center gap-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors"
           >
             Encaminhar <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
           </button>
@@ -2150,7 +3362,7 @@ export default function ConversationsPage() {
                   value={forwardQuery}
                   onChange={(e) => setForwardQuery(e.target.value)}
                   placeholder="Buscar conversa..."
-                  className="w-full bg-black/20 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-blue-500/50"
+                  className="w-full bg-black/20 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-sky-500/50"
                   autoFocus
                 />
               </div>
@@ -2168,7 +3380,7 @@ export default function ConversationsPage() {
                   >
                     <div className="w-10 h-10 rounded-full bg-zinc-800 flex-shrink-0 flex items-center justify-center overflow-hidden">
                       {c.avatarUrl ? (
-                        <img src={c.avatarUrl} alt={c.name} className="w-full h-full object-cover" />
+                        <SafeAvatar src={c.avatarUrl} alt={c.name} className="w-full h-full object-cover" />
                       ) : (
                         <User className="w-5 h-5 text-zinc-500" />
                       )}
@@ -2197,18 +3409,22 @@ export default function ConversationsPage() {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-            <button 
-              key={emoji}
-              onClick={() => {
-                handleReaction(reactionPicker, emoji);
-                setReactionPicker(null);
-              }}
-              className="p-1.5 hover:bg-white/10 rounded-full transition-all hover:scale-125 text-lg"
-            >
-              {emoji}
-            </button>
-          ))}
+          {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => {
+            const msg = activeConvo?.messages.find(m => m.id === reactionPicker);
+            const isSelected = msg?.reactions && typeof msg.reactions === 'object' && emoji in (msg.reactions as object);
+            return (
+              <button 
+                key={emoji}
+                onClick={() => {
+                  handleReaction(reactionPicker, isSelected ? "" : emoji);
+                  setReactionPicker(null);
+                }}
+                className={`p-1.5 hover:bg-white/10 rounded-full transition-all hover:scale-125 text-lg ${isSelected ? 'bg-white/20' : ''}`}
+              >
+                {emoji}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -2249,7 +3465,7 @@ export default function ConversationsPage() {
                     <div className="relative group">
                       <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/10 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
                         {myProfile.picture ? (
-                          <img src={myProfile.picture} alt="Profile" className="w-full h-full object-cover" />
+                          <SafeAvatar src={myProfile.picture} alt="Profile" className="w-full h-full object-cover" />
                         ) : myProfile.name?.substring(0, 1)}
                       </div>
                       <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
@@ -2318,7 +3534,7 @@ export default function ConversationsPage() {
             <div className="p-6 bg-white/[0.02] border-t border-white/5 flex justify-end">
               <button 
                 onClick={() => setIsProfileModalOpen(false)}
-                className="px-6 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-zinc-200 transition-all active:scale-95"
+                className="px-6 py-2.5 bg-zinc-100 text-black rounded-xl text-sm font-bold hover:bg-white transition-all active:scale-95"
               >
                 Concluído
               </button>
@@ -2342,7 +3558,7 @@ export default function ConversationsPage() {
               <div className="flex flex-col items-center text-center mb-8">
                 <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-white/5 mb-4 flex items-center justify-center text-3xl font-bold overflow-hidden shadow-xl">
                   {activeConvo.avatarUrl ? (
-                    <img src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
+                    <SafeAvatar src={activeConvo.avatarUrl} alt={activeConvo.name} className="w-full h-full object-cover" />
                   ) : activeConvo.name.substring(0, 1)}
                 </div>
                 {isEditingContactName ? (
@@ -2355,12 +3571,12 @@ export default function ConversationsPage() {
                         if (e.key === 'Enter') handleSaveContactName();
                         if (e.key === 'Escape') setIsEditingContactName(false);
                       }}
-                      className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-center font-semibold text-white focus:outline-none focus:border-amber-500/50 transition-all max-w-[200px]"
+                      className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-center font-semibold text-white focus:outline-none focus:border-sky-500/50 transition-all max-w-[200px]"
                       autoFocus
                     />
                     <button 
                       onClick={handleSaveContactName}
-                      className="p-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl transition-all"
+                      className="p-2 bg-zinc-100 hover:bg-white text-black rounded-xl transition-all"
                     >
                       <Check className="w-3.5 h-3.5" />
                     </button>
@@ -2377,11 +3593,11 @@ export default function ConversationsPage() {
                       setEditedContactNameValue(activeConvo.name);
                       setIsEditingContactName(true);
                     }}
-                    className="text-xl font-bold text-white mb-1 flex items-center justify-center gap-2 cursor-pointer group hover:text-amber-500 transition-all"
+                    className="text-xl font-bold text-white mb-1 flex items-center justify-center gap-2 cursor-pointer group hover:text-sky-500 transition-all"
                     title="Clique para editar"
                   >
                     <span>{activeConvo.name}</span>
-                    <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-amber-500 transition-all" />
+                    <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-sky-500 transition-all" />
                   </h2>
                 )}
                 <div className="flex items-center gap-1.5 text-zinc-500 text-sm">
@@ -2419,7 +3635,7 @@ export default function ConversationsPage() {
                   setIsContactProfileModalOpen(false);
                   setIsAnalysisCollapsed(false);
                 }}
-                className="px-6 py-2.5 bg-white text-black rounded-xl text-sm font-bold hover:bg-zinc-200 transition-all active:scale-95"
+                className="px-6 py-2.5 bg-zinc-100 text-black rounded-xl text-sm font-bold hover:bg-white transition-all active:scale-95"
               >
                 Ver Análise IA
               </button>
@@ -2427,13 +3643,306 @@ export default function ConversationsPage() {
           </div>
         </div>
       )}
+      
+      {/* Fechamento Modal */}
+      {pendingClosedDeal && (
+        <Suspense fallback={null}>
+          <ClosedDealModal
+            leadId={pendingClosedDeal.leadId}
+            leadName={activeConvo?.name || "Lead"}
+            targetStage={pendingClosedDeal.newStageLabel || pendingClosedDeal.newStage}
+            onClose={() => setPendingClosedDeal(null)}
+            onSuccess={() => {
+              showToast("Venda despachada e e-mail enviado com sucesso!", "success");
+              const stageToSave = pendingClosedDeal.newStage;
+              setPendingClosedDeal(null);
+              
+              // Proceed with optimistic update and saving
+              if (activeConvo) {
+                setIsSavingStage(true);
+                const previousConversations = [...conversations];
+                setConversations((current) => current.map((conversation) => (
+                  conversation.id === activeConvo.id
+                    ? {
+                        ...conversation,
+                        stageKey: stageToSave,
+                        stage: pendingClosedDeal.newStageLabel,
+                      }
+                    : conversation
+                )));
+                
+                updateConversationStage(activeConvo.id, stageToSave)
+                  .catch(err => {
+                    console.error(err);
+                    setConversations(previousConversations);
+                    showToast("Erro ao salvar etapa.", "error");
+                  })
+                  .finally(() => setIsSavingStage(false));
+              }
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Masterclass Modal */}
+      {inviteMasterclassLeadId && (
+        <Suspense fallback={null}>
+          <InviteMasterclassModal
+            leadId={inviteMasterclassLeadId}
+            leadName={activeConvo?.name || "Lead"}
+            onClose={() => setInviteMasterclassLeadId(null)}
+            onSuccess={() => {
+              showToast("Convite de Masterclass enviado com sucesso!", "success");
+              setInviteMasterclassLeadId(null);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* === MODAL: COMPARTILHAR CONTATO === */}
+      {isShareContactModalOpen && activeConvo && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col max-h-[80vh]">
+            <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
+              <div className="flex items-center gap-2 text-zinc-100">
+                <Share2 className="w-5 h-5 text-sky-500" />
+                <h3 className="font-semibold text-base">Enviar {activeConvo.name} para...</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsShareContactModalOpen(false);
+                  setShareContactSearchQuery("");
+                }}
+                className="p-2 text-zinc-500 hover:text-white transition-colors rounded-full hover:bg-white/5"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </header>
+            
+            <div className="p-4 border-b border-white/5 bg-[#0f0f12]">
+              <div className="relative">
+                <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar contato de destino..."
+                  value={shareContactSearchQuery}
+                  onChange={(e) => setShareContactSearchQuery(e.target.value)}
+                  className="w-full bg-[#18181b] border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-zinc-200 focus:outline-none focus:border-sky-500/50 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+              {conversations
+                .filter(c => c.id !== activeConvo.id && (c.name.toLowerCase().includes(shareContactSearchQuery.toLowerCase()) || c.phone.includes(shareContactSearchQuery)))
+                .map(c => (
+                  <button
+                    key={c.id}
+                    onClick={async () => {
+                      if (isSharingContact) return;
+                      setIsSharingContact(true);
+                      try {
+                        const { shareContactMessage } = await import('@/actions/crm');
+                        await shareContactMessage(activeConvo.contactId, c.id);
+                        showToast(`Contato enviado para ${c.name} com sucesso!`);
+                        setIsShareContactModalOpen(false);
+                        setShareContactSearchQuery("");
+                      } catch (err: any) {
+                        showToast(err.message || "Erro ao compartilhar contato", "error");
+                      } finally {
+                        setIsSharingContact(false);
+                      }
+                    }}
+                    disabled={isSharingContact}
+                    className="w-full flex items-center gap-3 p-3 hover:bg-white/[0.04] rounded-xl transition-colors text-left group disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded bg-zinc-800 flex items-center justify-center shrink-0 overflow-hidden">
+                      {c.avatarUrl ? (
+                        <SafeAvatar src={c.avatarUrl} alt={c.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-xs font-bold text-zinc-500">{c.initials}</span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-zinc-200 truncate group-hover:text-sky-400 transition-colors">{c.name}</p>
+                      <p className="text-[11px] text-zinc-500 truncate">{c.phone}</p>
+                    </div>
+                    <Send className="w-4 h-4 text-zinc-600 group-hover:text-sky-400 transition-colors shrink-0" />
+                  </button>
+                ))}
+                
+              {conversations.filter(c => c.id !== activeConvo.id && (c.name.toLowerCase().includes(shareContactSearchQuery.toLowerCase()) || c.phone.includes(shareContactSearchQuery))).length === 0 && (
+                <div className="text-center py-8 text-sm text-zinc-500">
+                  Nenhum contato encontrado.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === MODAL: QUICK REPLIES === */}
+      {isQuickRepliesModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+            <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
+              <div className="flex items-center gap-2 text-zinc-100">
+                <Zap className="w-5 h-5 text-amber-500" />
+                <h3 className="font-semibold text-base">Respostas Rápidas</h3>
+              </div>
+              <button 
+                onClick={() => setIsQuickRepliesModalOpen(false)}
+                className="p-2 text-zinc-500 hover:text-white transition-colors rounded-full hover:bg-white/5"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </header>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="mb-6">
+                <p className="text-sm text-zinc-400 mb-4">
+                  Crie atalhos para mensagens que você envia com frequência. Para usar, digite <code className="bg-zinc-800 px-1 rounded text-amber-400">/</code> seguido do atalho na caixa de mensagem.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Atalho (ex: ola)"
+                    id="qr-shortcut"
+                    className="w-1/4 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Título (ex: Saudação inicial)"
+                    id="qr-title"
+                    className="w-1/4 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                  />
+                  <textarea
+                    placeholder="Mensagem..."
+                    id="qr-content"
+                    className="flex-1 bg-[#0a0a0c] border border-white/10 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 resize-none h-[42px]"
+                  />
+                  <button
+                    onClick={async () => {
+                      const shortcut = (document.getElementById('qr-shortcut') as HTMLInputElement).value;
+                      const title = (document.getElementById('qr-title') as HTMLInputElement).value;
+                      const content = (document.getElementById('qr-content') as HTMLTextAreaElement).value;
+                      if (!shortcut || !title || !content) {
+                        showToast("Preencha todos os campos", "error");
+                        return;
+                      }
+                      const res = await createQuickReply(shortcut, title, content);
+                      if (res.success) {
+                        showToast("Resposta rápida criada!");
+                        setQuickReplies(prev => [...prev, res.reply as QuickReplyData].sort((a,b) => a.shortcut.localeCompare(b.shortcut)));
+                        (document.getElementById('qr-shortcut') as HTMLInputElement).value = "";
+                        (document.getElementById('qr-title') as HTMLInputElement).value = "";
+                        (document.getElementById('qr-content') as HTMLTextAreaElement).value = "";
+                      } else {
+                        showToast(res.error || "Erro", "error");
+                      }
+                    }}
+                    className="bg-amber-500 hover:bg-amber-600 text-black px-4 rounded-xl text-sm font-bold transition-colors"
+                  >
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {quickReplies.length === 0 ? (
+                  <div className="text-center py-8 text-zinc-500 text-sm">
+                    Nenhuma resposta rápida cadastrada ainda.
+                  </div>
+                ) : (
+                  quickReplies.map((qr) => (
+                    <div key={qr.id} className="bg-white/5 border border-white/5 rounded-xl p-4 group">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">/{qr.shortcut}</span>
+                          <h4 className="font-semibold text-zinc-200 text-sm">{qr.title}</h4>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (confirm("Excluir esta resposta rápida?")) {
+                              const res = await deleteQuickReply(qr.id);
+                              if (res.success) {
+                                setQuickReplies(prev => prev.filter(r => r.id !== qr.id));
+                                showToast("Excluída com sucesso.");
+                              } else {
+                                showToast(res.error || "Erro", "error");
+                              }
+                            }
+                          }}
+                          className="text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1"
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-sm text-zinc-400 whitespace-pre-wrap">{qr.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === MODAL: AGENDAR REUNIÃO === */}
+      {meetingModalOpen && (
+        <Suspense fallback={null}>
+          <MeetingModal
+            isOpen={meetingModalOpen}
+            onClose={() => setMeetingModalOpen(false)}
+            onSuccess={(email) => {
+              showToast("Reunião agendada com sucesso!");
+              if (activeConvo) {
+                // update local conversation stage to AGENDADO if we want, or just re-fetch
+                const newConversations = conversations.map(c => 
+                  c.id === activeConvo.id ? { ...c, stage: "Agendado", email: email || c.email } : c
+                );
+                setConversations(newConversations);
+              }
+            }}
+            contactId={activeConvo?.contactId || ""}
+            contactName={activeConvo?.name || ""}
+            defaultEmail={activeConvo?.email || ""}
+            defaultAddress={activeConvo?.address || ""}
+          />
+        </Suspense>
+      )}
+
+      {taskModal && (
+        <Suspense fallback={null}>
+          <TaskModal
+            isOpen={Boolean(taskModal)}
+            onClose={() => setTaskModal(null)}
+            onCreated={(task) => {
+              setLeadTasks((current) => [task, ...current.filter((item) => item.id !== task.id)]);
+              setTacticalTab("tasks");
+            }}
+            contactId={taskModal?.contactId || null}
+            contactName={taskModal?.contactName || ""}
+            defaultTitle={taskModal?.defaultTitle || ""}
+            defaultDescription={taskModal?.defaultDescription || ""}
+            defaultType={taskModal?.defaultType || "FOLLOW_UP"}
+            defaultPriority={taskModal?.defaultPriority || "MEDIUM"}
+            defaultDueAt={taskModal?.defaultDueAt || ""}
+            defaultSource={taskModal?.defaultSource || "MANUAL"}
+            defaultConversationId={taskModal?.defaultConversationId || null}
+            defaultAnalysisId={taskModal?.defaultAnalysisId || null}
+          />
+        </Suspense>
+      )}
+
       {/* === MODAL: NOVA CONVERSA === */}
       {isNewChatModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95 duration-200">
           <div className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#141417]">
               <div className="flex items-center gap-2 text-zinc-100">
-                <UserPlus className="w-5 h-5 text-amber-500" />
+                <UserPlus className="w-5 h-5 text-sky-500" />
                 <h3 className="font-semibold text-base">Nova Conversa</h3>
               </div>
               <button 
@@ -2458,7 +3967,7 @@ export default function ConversationsPage() {
                   placeholder="Ex: Arthur Fava"
                   value={newChatName}
                   onChange={(e) => setNewChatName(e.target.value)}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder:text-zinc-600 transition-all"
+                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all"
                 />
               </div>
 
@@ -2470,7 +3979,7 @@ export default function ConversationsPage() {
                   placeholder="Ex: 5511999999999"
                   value={newChatPhone}
                   onChange={(e) => setNewChatPhone(e.target.value)}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder:text-zinc-600 transition-all"
+                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all"
                 />
                 <p className="text-[10px] text-zinc-500 mt-1">Inclua o DDI (55) + DDD + número. Exemplo: 5511999999999</p>
               </div>
@@ -2482,7 +3991,7 @@ export default function ConversationsPage() {
                   value={newChatInitialMessage}
                   onChange={(e) => setNewChatInitialMessage(e.target.value)}
                   rows={3}
-                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-amber-500 placeholder:text-zinc-600 transition-all resize-none"
+                  className="w-full bg-[#161619] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-sky-500 placeholder:text-zinc-600 transition-all resize-none"
                 />
               </div>
 
@@ -2502,7 +4011,7 @@ export default function ConversationsPage() {
                 <button 
                   type="submit"
                   disabled={isSubmittingNewChat}
-                  className="flex-1 py-2.5 bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-all shadow"
+                  className="flex-1 py-2.5 bg-zinc-100 text-black hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-sm font-bold transition-all shadow"
                 >
                   {isSubmittingNewChat ? "Criando..." : "Iniciar Conversa"}
                 </button>
@@ -2511,27 +4020,6 @@ export default function ConversationsPage() {
           </div>
         </div>
       )}
-
-      {/* Toast Notifications */}
-      <div className="fixed top-5 right-5 z-[100] space-y-2 pointer-events-none">
-        {toasts.map(toast => (
-          <div
-            key={toast.id}
-            className="bg-[#0c0c0e]/95 backdrop-blur-md border border-amber-500/20 text-zinc-200 px-4 py-3.5 rounded-xl shadow-2xl flex items-center justify-between gap-3 animate-in slide-in-from-top-5 duration-300 max-w-sm pointer-events-auto"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-2 h-2 rounded-full bg-amber-500 shrink-0 animate-ping" />
-              <div className="text-xs font-semibold leading-relaxed">{toast.message}</div>
-            </div>
-            <button
-              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-              className="text-zinc-500 hover:text-white transition-colors text-lg font-bold ml-2 cursor-pointer"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -2545,17 +4033,53 @@ function MetaCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function TaskRow({ task, onToggle }: { task: TaskData; onToggle: () => void }) {
+  const isDone = task.status === "DONE";
+  const priorityStyles: Record<string, string> = {
+    URGENT: "text-red-400 bg-red-500/10 border-red-500/20",
+    HIGH: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+    MEDIUM: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+    LOW: "text-zinc-500 bg-zinc-700/30 border-zinc-600/30",
+  };
+
+  return (
+    <div className={`rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 transition-colors ${isDone ? "opacity-55" : "hover:border-white/10"}`}>
+      <div className="flex items-start gap-3">
+        <button
+          onClick={onToggle}
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+            isDone ? "border-emerald-500 bg-emerald-500/20" : "border-zinc-600 hover:border-zinc-300"
+          }`}
+          title={isDone ? "Reabrir tarefa" : "Concluir tarefa"}
+        >
+          {isDone && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-semibold leading-snug ${isDone ? "text-zinc-500 line-through" : "text-zinc-200"}`}>{task.title}</p>
+          <p className="mt-1 text-[11px] text-zinc-500">{task.due}</p>
+        </div>
+        <span className={`shrink-0 rounded border px-2 py-0.5 text-[9px] font-bold uppercase ${priorityStyles[task.priority] || priorityStyles.MEDIUM}`}>
+          {task.priority}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function AnalysisPanel({ 
   result, 
   analysisId,
   onCopy, 
-  copiedId 
+  copiedId,
+  onCreateTask,
 }: { 
   result: AnalysisResponse; 
   analysisId?: string;
   onCopy: (t: string, id: string) => void; 
   copiedId: string | null; 
+  onCreateTask?: (title: string, description: string, priority: string, dueAt?: string) => void;
 }) {
+  const { showToast } = useToast();
   const [summary, setSummary] = useState(result.summary);
   const [nextStep, setNextStep] = useState(result.nextConcreteStep);
   const [isSaving, setIsSaving] = useState(false);
@@ -2576,7 +4100,7 @@ function AnalysisPanel({
       });
     } catch (err) {
       console.error(err);
-      alert("Erro ao salvar análise.");
+      showToast("Erro ao salvar análise.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -2595,9 +4119,9 @@ function AnalysisPanel({
   };
 
   const leadColors: Record<string, string> = {
-    LEAD_FRIO: "text-blue-400 border-blue-500/30 bg-blue-500/10",
-    LEAD_MORNO: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10",
-    LEAD_QUENTE: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+    LEAD_FRIO: "text-indigo-400 border-indigo-500/30 bg-indigo-500/10",
+    LEAD_MORNO: "text-amber-500 border-amber-500/30 bg-amber-500/10",
+    LEAD_QUENTE: "text-rose-400 border-rose-500/30 bg-rose-500/10",
     CLIENTE_NEGOCIACAO: "text-violet-400 border-violet-500/30 bg-violet-500/10",
     CLIENTE_TRAVADO: "text-red-400 border-red-500/30 bg-red-500/10",
     CLIENTE_PERDIDO: "text-zinc-500 border-zinc-600/30 bg-zinc-600/10",
@@ -2695,7 +4219,23 @@ function AnalysisPanel({
       </div>
 
       <div className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 space-y-1">
-        <SectionTitle><ArrowRight className="w-3 h-3 inline mr-1 text-zinc-300" />Próximo Passo</SectionTitle>
+        <div className="flex items-center justify-between gap-3">
+          <SectionTitle><ArrowRight className="w-3 h-3 inline mr-1 text-zinc-300" />Próximo Passo</SectionTitle>
+          {onCreateTask && nextStep.trim() && (
+            <button
+              type="button"
+              onClick={() => onCreateTask(
+                nextStep,
+                `Criada a partir da análise IA. Urgência: ${result.urgency}. Risco: ${result.riskLevel}.`,
+                result.urgency === "CRITICA" || result.riskLevel === "ALTO" ? "URGENT" : result.urgency === "ALTA" ? "HIGH" : "MEDIUM",
+                getDueAtFromTimeWindow(result.timeWindow)
+              )}
+              className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+            >
+              Virar tarefa
+            </button>
+          )}
+        </div>
         <textarea
           value={nextStep}
           onChange={(e) => setNextStep(e.target.value)}
@@ -2749,6 +4289,8 @@ function MessageBubble({
   forwardMode,
   isSelected,
   onToggleSelect,
+  contactId,
+  onContactUpdate,
 }: { 
   msg: ConversationMessage; 
   onContextMenu?: (e: React.MouseEvent, id: string) => void;
@@ -2759,15 +4301,61 @@ function MessageBubble({
   forwardMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
+  contactId?: string;
+  onContactUpdate?: (updates: { email?: string; address?: string }) => void;
 }) {
+  const { showToast } = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
   const [rescuedMediaUrl, setRescuedMediaUrl] = useState<string | null>(null);
   const [isRescuing, setIsRescuing] = useState(false);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [isSavingEntity, setIsSavingEntity] = useState(false);
   
   const isOutbound = msg.direction === "outbound";
-  const currentMediaUrl = msg.mediaUrl || rescuedMediaUrl;
+  const safeMessageMediaUrl = msg.mediaUrl && !isTemporaryWhatsAppMediaUrl(msg.mediaUrl) ? msg.mediaUrl : null;
+  const currentMediaUrl = rescuedMediaUrl || safeMessageMediaUrl;
   const hasMedia = !!currentMediaUrl;
+  const currentDownloadUrl = currentMediaUrl ? `${currentMediaUrl}${currentMediaUrl.includes("?") ? "&" : "?"}download=1` : null;
+
+  const smartEntities = React.useMemo(() => {
+    return extractSmartEntities(msg.text || "");
+  }, [msg.text]);
+
+  const handleAddSmartEntity = async (entity: SmartEntity) => {
+    if (!contactId || isSavingEntity) return;
+    setIsSavingEntity(true);
+    
+    try {
+      if (entity.type === 'email') {
+        onContactUpdate?.({ email: entity.value });
+        await updateContactEmail(contactId, entity.value);
+        showToast("Email adicionado ao contato com sucesso!", "success");
+      } else if (entity.type === 'address') {
+        onContactUpdate?.({ address: entity.value });
+        await updateContactAddress(contactId, entity.value);
+        showToast("Endereço adicionado ao contato com sucesso!", "success");
+      } else if (entity.type === 'maps_link') {
+        showToast("Buscando endereço no Google Maps...", "info");
+        const res = await resolveGoogleMapsAddress(entity.value);
+        if (res.success && res.address) {
+           onContactUpdate?.({ address: res.address });
+           await updateContactAddress(contactId, res.address);
+           showToast("Endereço salvo com sucesso!", "success");
+        } else {
+           showToast("Não foi possível extrair o endereço do link.", "error");
+        }
+      }
+    } catch (err) {
+       console.error("Error saving entity:", err);
+       showToast("Erro ao salvar informação.", "error");
+    } finally {
+       setIsSavingEntity(false);
+    }
+  };
+
+  const reactionEmojis = msg.reactions && typeof msg.reactions === 'object'
+    ? Object.keys(msg.reactions).filter(Boolean)
+    : [];
 
   const handleRescueMedia = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -2779,11 +4367,11 @@ function MessageBubble({
       if (data.success && data.mediaUrl) {
         setRescuedMediaUrl(data.mediaUrl);
       } else {
-        alert("Não foi possível carregar a mídia.");
+        showToast(data.error || "Não foi possível carregar a mídia.", "error");
       }
     } catch (err) {
       console.error(err);
-      alert("Erro ao carregar mídia.");
+      showToast("Erro ao carregar mídia.", "error");
     } finally {
       setIsRescuing(false);
     }
@@ -2807,7 +4395,7 @@ function MessageBubble({
       )}
       <div 
         id={msg.id}
-        className={`flex w-full ${isOutbound ? "justify-end" : "justify-start"} group relative`}
+        className={`flex w-full ${isOutbound ? "justify-end" : "justify-start"} group relative ${reactionEmojis.length > 0 ? "mb-2" : ""}`}
         onContextMenu={(e) => onContextMenu?.(e, msg.id)}
         onClick={() => {
           if (forwardMode) onToggleSelect?.(msg.id);
@@ -2817,7 +4405,7 @@ function MessageBubble({
         {!isOutbound && (
           <div className="w-5 h-5 rounded-full bg-zinc-800 border border-white/5 flex-shrink-0 overflow-hidden mt-1">
             {avatarUrl ? (
-              <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              <SafeAvatar src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-[9px] text-zinc-500 font-bold">
                 {msg.text?.substring(0, 1) || "C"}
@@ -2826,7 +4414,7 @@ function MessageBubble({
           </div>
         )}
 
-        <div className={`rounded px-3 py-2 relative ${isOutbound ? "bg-zinc-100 text-black rounded-tr-none shadow-sm" : "bg-zinc-900 text-zinc-300 rounded-tl-none border border-zinc-850"}`}>
+        <div className={`rounded px-3 py-2 relative ${isOutbound ? "chat-bubble-sent bg-zinc-800 text-zinc-100 rounded-tr-none shadow-sm" : "chat-bubble-received bg-[#0c0c0e] text-zinc-300 rounded-tl-none border border-zinc-850"}`}>
           
           {/* Reaction Button (appears on hover) */}
           <button 
@@ -2843,7 +4431,7 @@ function MessageBubble({
           {msg.type === "IMAGE" && (
             hasMedia ? (
               <>
-                <img onClick={() => setIsLightboxOpen(true)} src={currentMediaUrl!} alt="Imagem" className="max-w-full rounded-lg mb-0.5 object-contain max-h-[200px] cursor-pointer" loading="lazy" />
+                <img onClick={() => setIsLightboxOpen(true)} onError={() => { setRescuedMediaUrl(null); showToast("Imagem indisponível. Tente carregar novamente.", "error"); }} src={currentMediaUrl!} alt="Imagem" className="max-w-full rounded-lg mb-0.5 object-contain max-h-[200px] cursor-pointer" loading="lazy" />
                 {isLightboxOpen && (
                   <div className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4" onClick={() => setIsLightboxOpen(false)}>
                     <img src={currentMediaUrl!} alt="Imagem Ampliada" className="max-w-full max-h-full object-contain" />
@@ -2863,7 +4451,7 @@ function MessageBubble({
           {/* === STICKER === */}
           {msg.type === "STICKER" && (
             hasMedia ? (
-              <img src={currentMediaUrl!} alt="Figurinha" className="w-24 h-24 mb-0.5 object-contain" loading="lazy" />
+              <img src={currentMediaUrl!} onError={() => { setRescuedMediaUrl(null); showToast("Figurinha indisponível. Tente carregar novamente.", "error"); }} alt="Figurinha" className="w-24 h-24 mb-0.5 object-contain" loading="lazy" />
             ) : (
               <button onClick={handleRescueMedia} disabled={isRescuing} className="flex items-center gap-1.5 mb-0.5 hover:opacity-80 transition-opacity">
                 <span className="text-xl">{isRescuing ? "⏳" : "🏷️"}</span>
@@ -2876,10 +4464,7 @@ function MessageBubble({
           {msg.type === "AUDIO" && (
             hasMedia ? (
               <div className="mb-0.5">
-                <audio controls preload="metadata" className="w-full min-w-[180px] max-w-[220px] h-8 mb-0.5">
-                  <source src={currentMediaUrl!} />
-                  Seu navegador não suporta áudio.
-                </audio>
+                <CustomAudioPlayer src={currentMediaUrl!} />
                 {msg.text && !isMediaLabel && (
                   <div className="mt-0.5 bg-black/10 border border-black/5 rounded-md p-1 text-[11px] text-zinc-300 italic border-l-2 border-l-emerald-500/50">
                     <span className="font-semibold text-[8px] text-emerald-500/80 uppercase not-italic block mb-0.5">Transcrição IA:</span>
@@ -2888,22 +4473,29 @@ function MessageBubble({
                 )}
               </div>
             ) : (
-              <button onClick={handleRescueMedia} disabled={isRescuing} className={`flex items-center gap-2 p-1.5 rounded-lg mb-0.5 hover:bg-black/10 transition-colors w-full text-left ${isOutbound ? "bg-black/5" : "bg-white/5"}`}>
-                <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                  {isRescuing ? <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" /> : <Mic className="w-3 h-3 text-emerald-400" />}
-                </div>
-                <div className="flex flex-col flex-1">
-                  <span className="text-[10px] font-semibold">{isRescuing ? "Baixando..." : "Carregar Áudio"}</span>
-                </div>
-              </button>
+              <div className="w-full">
+                <button onClick={handleRescueMedia} disabled={isRescuing} className={`flex items-center gap-2 p-1.5 rounded-lg mb-0.5 hover:bg-black/10 transition-colors w-full text-left ${isOutbound ? "bg-black/5" : "bg-white/5"}`}>
+                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                    {isRescuing ? <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" /> : <Mic className="w-3 h-3 text-emerald-400" />}
+                  </div>
+                  <div className="flex flex-col flex-1">
+                    <span className="text-[10px] font-semibold">{isRescuing ? "Baixando..." : "Carregar Áudio"}</span>
+                  </div>
+                </button>
+                {msg.text && !isMediaLabel && (
+                  <div className="mt-1 bg-black/10 border border-black/5 rounded-md p-1 text-[11px] text-zinc-300 italic border-l-2 border-l-emerald-500/50">
+                    <span className="font-semibold text-[8px] text-emerald-500/80 uppercase not-italic block mb-0.5">Transcrição IA:</span>
+                    {msg.text}
+                  </div>
+                )}
+              </div>
             )
           )}
 
           {/* === VIDEO === */}
           {msg.type === "VIDEO" && (
             hasMedia ? (
-              <video controls preload="metadata" className="max-w-full rounded-lg mb-0.5 max-h-[200px]">
-                <source src={currentMediaUrl!} />
+              <video src={currentMediaUrl!} controls preload="metadata" className="max-w-full rounded-lg mb-0.5 max-h-[200px]">
               </video>
             ) : (
               <button onClick={handleRescueMedia} disabled={isRescuing} className={`flex items-center gap-2 p-1.5 rounded-lg mb-0.5 hover:bg-black/10 transition-colors w-full text-left ${isOutbound ? "bg-black/5" : "bg-white/5"}`}>
@@ -2918,7 +4510,7 @@ function MessageBubble({
           {/* === DOCUMENT === */}
           {msg.type === "DOCUMENT" && (
             hasMedia ? (
-              <a href={currentMediaUrl!} download="documento" className={`flex items-center gap-1.5 p-1.5 rounded-lg mb-0.5 border ${isOutbound ? "bg-black/5 border-black/10 hover:bg-black/10" : "bg-white/5 border-white/10 hover:bg-white/10"} transition-colors`}>
+              <a href={currentDownloadUrl!} download={(isMediaLabel ? "documento" : msg.text) || "documento"} className={`flex items-center gap-1.5 p-1.5 rounded-lg mb-0.5 border ${isOutbound ? "bg-black/5 border-black/10 hover:bg-black/10" : "bg-white/5 border-white/10 hover:bg-white/10"} transition-colors`}>
                 <div className={`p-1 rounded-md ${isOutbound ? "bg-white" : "bg-[#27272a]"}`}>
                   <Paperclip className="w-3 h-3" />
                 </div>
@@ -2936,6 +4528,10 @@ function MessageBubble({
                 </div>
               </button>
             )
+          )}
+
+          {isMediaMessageType(msg.type) && msg.mediaStatus === "FAILED" && !hasMedia && (
+            <p className="text-[10px] text-red-300 mt-1">Mídia indisponível: {msg.mediaError || "falha no processamento"}</p>
           )}
 
           {/* === CONTACT CARD === */}
@@ -2968,7 +4564,7 @@ function MessageBubble({
                 return (
                   <div className={`p-2.5 rounded-lg border ${isOutbound ? "bg-black/5 border-black/10 text-black" : "bg-zinc-900 border-zinc-800 text-white"} min-w-[200px] max-w-[260px] shadow-sm`}>
                     <div className="flex items-center gap-2 mb-2">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isOutbound ? "bg-zinc-800 text-white" : "bg-amber-500 text-black"} font-bold text-[10px] shadow`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isOutbound ? "bg-zinc-800 text-white" : "bg-zinc-100 text-black"} font-bold text-[10px] shadow`}>
                         {c.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -2985,7 +4581,7 @@ function MessageBubble({
                           onStartChat(c.phone, c.name);
                         }}
                         className={`w-full py-1.5 px-2 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1 transition-all ${
-                          isOutbound ? "bg-zinc-900 hover:bg-zinc-800 text-white" : "bg-amber-500 hover:bg-amber-400 text-black"
+                          isOutbound ? "bg-zinc-900 hover:bg-zinc-800 text-white" : "bg-zinc-100 hover:bg-white text-black"
                         }`}
                       >
                         <UserPlus className="w-3 h-3" />
@@ -3005,7 +4601,7 @@ function MessageBubble({
                           <div 
                             key={i} 
                             className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[9px] shadow-md border ${
-                              isOutbound ? "bg-zinc-800 text-white border-zinc-900" : "bg-amber-500 text-black border-zinc-900"
+                              isOutbound ? "bg-zinc-800 text-white border-zinc-900" : "bg-zinc-100 text-black border-zinc-900"
                             }`}
                           >
                             {c.name.charAt(0).toUpperCase()}
@@ -3019,7 +4615,7 @@ function MessageBubble({
                     <button
                       onClick={() => setIsExpanded(true)}
                       className={`w-full py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-all ${
-                        isOutbound ? "bg-zinc-900 hover:bg-zinc-800 text-white" : "bg-amber-500 hover:bg-amber-400 text-black"
+                        isOutbound ? "bg-zinc-900 hover:bg-zinc-800 text-white" : "bg-zinc-100 hover:bg-white text-black"
                       }`}
                     >
                       Ver todos
@@ -3037,7 +4633,7 @@ function MessageBubble({
                   <div className="max-h-[180px] overflow-y-auto pr-1 space-y-2 divide-y divide-white/[0.04]">
                     {contacts.map((c, index) => (
                       <div key={index} className="flex items-center gap-2 pt-1.5">
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isOutbound ? "bg-zinc-800 text-white" : "bg-amber-500 text-black"} font-bold text-xs shadow`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isOutbound ? "bg-zinc-800 text-white" : "bg-zinc-100 text-black"} font-bold text-xs shadow`}>
                           {c.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -3053,7 +4649,7 @@ function MessageBubble({
                             className={`p-1.5 rounded-lg transition-colors ${
                               isOutbound 
                                 ? "bg-zinc-900 hover:bg-zinc-800 text-white" 
-                                : "bg-amber-500 hover:bg-amber-400 text-black"
+                                : "bg-zinc-100 hover:bg-white text-black"
                             }`}
                             title="Conversar"
                           >
@@ -3078,19 +4674,59 @@ function MessageBubble({
             <p className="text-[13px] leading-snug whitespace-pre-wrap mt-0.5 opacity-90">{msg.text}</p>
           )}
 
-          <div className={`flex items-center gap-1 mt-0.5 ${isOutbound ? "justify-end text-black/60" : "text-zinc-500"}`}>
+          {/* === REACTION BADGE === */}
+          {reactionEmojis.length > 0 && (
+            <div 
+              className={`absolute bottom-[-10px] ${isOutbound ? 'left-3' : 'right-3'} flex items-center gap-0.5 bg-[#18181b] border border-white/10 rounded-full px-1.5 py-0.5 shadow-lg z-10 text-[10px] select-none hover:scale-105 transition-transform cursor-pointer`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReactionClick?.(msg.id);
+              }}
+            >
+              {reactionEmojis.map(emoji => (
+                <span key={emoji}>{emoji}</span>
+              ))}
+            </div>
+          )}
+
+          <div className={`flex items-center gap-1 mt-0.5 ${isOutbound ? "justify-end text-zinc-400" : "text-zinc-500"}`}>
+            {msg.isEdited && (
+              <span className="text-[9px] opacity-65 italic mr-1 select-none">editada</span>
+            )}
             <MessageTime timestamp={msg.timestamp} fallback={msg.time} />
             {isOutbound && (
               <div className="flex items-center gap-0.5">
-                {msg.isEdited && <Pencil className="w-2 h-2 opacity-50" />}
-                {msg.status === "SENT" && <Check className="w-3 h-3" />}
-                {msg.status === "DELIVERED" && <CheckCheck className="w-3 h-3 opacity-70" />}
-                {msg.status === "READ" && <CheckCheck className="w-3 h-3 text-blue-600 drop-shadow-sm" />}
-                {(!msg.status || msg.status === "PENDING") && <Check className="w-3 h-3 opacity-30" />}
+                {msg.status === "SENT" && <Check className="w-3 h-3 opacity-80" />}
+                {msg.status === "DELIVERED" && <CheckCheck className="w-3 h-3 opacity-80" />}
+                {msg.status === "READ" && <CheckCheck className="w-3 h-3 text-blue-500 drop-shadow-sm opacity-90" />}
+                {(!msg.status || msg.status === "PENDING") && <Check className="w-3 h-3 opacity-50" />}
               </div>
             )}
           </div>
         </div>
+
+        {/* Smart Entities Actions */}
+        {smartEntities.length > 0 && contactId && (
+          <div className={`flex flex-col gap-1 mb-1 transition-opacity ${isOutbound ? 'items-end' : 'items-start'} opacity-20 hover:opacity-100 group-hover:opacity-100`}>
+             {smartEntities.map((entity, idx) => (
+                <button
+                   key={idx}
+                   onClick={() => handleAddSmartEntity(entity)}
+                   disabled={isSavingEntity}
+                   className="p-1.5 rounded-full bg-zinc-800 border border-white/10 text-zinc-300 hover:bg-emerald-500/20 hover:text-emerald-400 hover:border-emerald-500/30 transition-all flex items-center justify-center group/btn relative"
+                >
+                   {isSavingEntity ? (
+                      <div className="w-3.5 h-3.5 border-2 border-emerald-500/50 border-t-transparent rounded-full animate-spin" />
+                   ) : (
+                      entity.type === 'email' ? <Mail className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />
+                   )}
+                   <span className="absolute whitespace-nowrap bg-zinc-900 text-[10px] font-medium border border-white/10 px-2 py-0.5 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity -top-7 shadow-lg z-20">
+                      Adicionar {entity.type === 'email' ? 'Email' : 'Endereço'}
+                   </span>
+                </button>
+             ))}
+          </div>
+        )}
       </div>
     </div>
     </div>
@@ -3104,7 +4740,7 @@ function MessageTime({ timestamp, fallback }: { timestamp: string; fallback: str
   }, []);
 
   if (!mounted) {
-    return <span className="text-[8px] font-mono uppercase tracking-widest">{fallback}</span>;
+    return <span className="text-[10px] font-mono uppercase tracking-widest">{fallback}</span>;
   }
 
   try {
@@ -3112,9 +4748,9 @@ function MessageTime({ timestamp, fallback }: { timestamp: string; fallback: str
       hour: '2-digit',
       minute: '2-digit',
     }).format(new Date(timestamp));
-    return <span className="text-[8px] font-mono uppercase tracking-widest">{formatted}</span>;
+    return <span className="text-[10px] font-mono uppercase tracking-widest">{formatted}</span>;
   } catch {
-    return <span className="text-[8px] font-mono uppercase tracking-widest">{fallback}</span>;
+    return <span className="text-[10px] font-mono uppercase tracking-widest">{fallback}</span>;
   }
 }
 

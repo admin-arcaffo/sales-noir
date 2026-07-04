@@ -1,7 +1,9 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { type ConversationData, sendConversationMessage } from "@/actions/crm";
+import { usePathname } from "next/navigation";
+import { type ConversationData, type ConversationMessage, sendConversationMessage } from "@/actions/crm";
+import { CHAT_CACHE_INVALIDATED_EVENT, clearChatCache } from "@/lib/chat-cache";
 
 interface FloatingChatContextType {
   conversations: ConversationData[];
@@ -26,7 +28,52 @@ interface FloatingChatContextType {
 
 const FloatingChatContext = createContext<FloatingChatContextType | undefined>(undefined);
 
+function isTemporaryWhatsAppMediaUrl(value?: string | null) {
+  if (!value) return false;
+  return value.includes("pps.whatsapp.net") || value.includes("mmg.whatsapp.net") || value.includes(".whatsapp.net/v/");
+}
+
+function mergeConversationMessages(existing: ConversationMessage[], incoming: ConversationMessage[]) {
+  const messageMap = new Map(existing.map((message) => [message.id, message]));
+
+  incoming.forEach((message) => {
+    const previous = messageMap.get(message.id);
+    const incomingMediaUrl = message.mediaUrl && !isTemporaryWhatsAppMediaUrl(message.mediaUrl) ? message.mediaUrl : null;
+    const previousMediaUrl = previous?.mediaUrl && !isTemporaryWhatsAppMediaUrl(previous.mediaUrl) ? previous.mediaUrl : null;
+    messageMap.set(message.id, {
+      ...previous,
+      ...message,
+      mediaUrl: incomingMediaUrl ?? previousMediaUrl ?? null,
+    });
+  });
+
+  return Array.from(messageMap.values()).sort((a, b) => (
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  ));
+}
+
+function mergeConversationData(existing: ConversationData, incoming: ConversationData): ConversationData {
+  return {
+    ...existing,
+    ...incoming,
+    latestAnalysis: incoming.latestAnalysis ?? existing.latestAnalysis,
+    contactProducts: incoming.contactProducts ?? existing.contactProducts,
+    messages: mergeConversationMessages(existing.messages, incoming.messages),
+  };
+}
+
+function stripTemporaryConversationMediaUrls(conversations: ConversationData[]) {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map((message) => ({
+      ...message,
+      mediaUrl: isTemporaryWhatsAppMediaUrl(message.mediaUrl) ? null : message.mediaUrl,
+    })),
+  }));
+}
+
 export function FloatingChatProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -51,7 +98,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         if (cached) {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setConversations(parsed);
+            setConversations(stripTemporaryConversationMediaUrls(parsed));
             if (cachedSync && cachedSync !== "undefined" && cachedSync !== "null") {
               lastSyncTimeRef.current = cachedSync;
             }
@@ -68,6 +115,20 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleInvalidation = () => {
+      clearChatCache();
+      lastSyncTimeRef.current = null;
+      hasDoneInitialSyncRef.current = false;
+      setConversations([]);
+    };
+
+    window.addEventListener(CHAT_CACHE_INVALIDATED_EVENT, handleInvalidation);
+    return () => window.removeEventListener(CHAT_CACHE_INVALIDATED_EVENT, handleInvalidation);
+  }, []);
+
   // Save lastReadMap to localStorage
   useEffect(() => {
     if (Object.keys(lastReadMap).length > 0 && typeof window !== "undefined") {
@@ -79,19 +140,19 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     }
   }, [lastReadMap]);
 
-  // Save conversations to localStorage (limit to top 50 to avoid QuotaExceededError)
+  // Save conversations to localStorage (limit to top 15 and remove messages to avoid QuotaExceededError)
   useEffect(() => {
     if (conversations.length > 0 && typeof window !== "undefined") {
       try {
-        const cacheFriendlyList = conversations.slice(0, 50).map((c) => ({
+        const cacheFriendlyList = conversations.slice(0, 15).map((c) => ({
           ...c,
-          messages: c.messages.slice(-5),
+          messages: [], // Don't cache messages to save space
         }));
         localStorage.setItem("sales_arcaffo_conversations", JSON.stringify(cacheFriendlyList));
       } catch (e) {
         console.warn("Storage quota exceeded or error occurred while writing to localStorage", e);
         try {
-          const metadataOnlyList = conversations.slice(0, 50).map((c) => ({
+          const metadataOnlyList = conversations.slice(0, 5).map((c) => ({
             ...c,
             messages: [],
           }));
@@ -105,6 +166,11 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
 
   // Main Background Polling Effect
   useEffect(() => {
+    if (pathname.startsWith("/conversations")) {
+      setSyncStatus("idle");
+      return;
+    }
+
     let alive = true;
     let timeoutId: NodeJS.Timeout;
 
@@ -114,7 +180,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       setSyncError(null);
       try {
         const syncTime = hasDoneInitialSyncRef.current ? lastSyncTimeRef.current : null;
-        const url = `/api/conversations${syncTime ? `?since=${encodeURIComponent(syncTime)}` : ""}`;
+        const params = new URLSearchParams({ scope: "floating", assignedToMe: "false" });
+        if (syncTime) params.set("since", syncTime);
+        const url = `/api/conversations?${params.toString()}`;
         const res = await fetch(url);
         if (res.status === 401) {
           setSyncStatus("idle");
@@ -167,8 +235,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
             return prev;
           } else {
             const updatedMap = new Map(result.conversations.map((c) => [c.id, c]));
-            const merged = prev.map((c) => (updatedMap.has(c.id) ? updatedMap.get(c.id)! : c));
-            const newItems = result.conversations.filter((c) => !prev.some((p) => p.id === c.id));
+            const previousIds = new Set(prev.map((c) => c.id));
+            const merged = prev.map((c) => (updatedMap.has(c.id) ? mergeConversationData(c, updatedMap.get(c.id)!) : c));
+            const newItems = result.conversations.filter((c) => !previousIds.has(c.id));
             nextList = [...newItems, ...merged];
           }
 
@@ -204,10 +273,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         }
       } finally {
         if (alive) {
-          // Dynamic interval: 2 seconds if on conversations page OR if popup is open, 10 seconds otherwise
-          const activeInConversationsPage =
-            typeof window !== "undefined" && window.location.pathname.startsWith("/conversations");
-          const interval = activeInConversationsPage || (isPopupOpen && activeConvoId) ? 2000 : 10000;
+          const interval = isPopupOpen && activeConvoId ? 5000 : 10000;
           timeoutId = setTimeout(refreshData, interval);
         }
       }
@@ -219,7 +285,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       alive = false;
       clearTimeout(timeoutId);
     };
-  }, [isPopupOpen, activeConvoId]);
+  }, [isPopupOpen, activeConvoId, pathname]);
 
   // Wrapper to select active conversation and manage read/unread status
   const selectConversation = (id: string | null) => {

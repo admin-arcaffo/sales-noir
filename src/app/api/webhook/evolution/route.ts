@@ -1,9 +1,12 @@
 import { NextResponse, NextRequest } from "next/server";
+
 import prisma from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
-import { verifyWebhookSignature, decryptToken } from "@/lib/encryption";
-import { evolution } from "@/lib/evolution";
+import { verifyWebhookSignature } from "@/lib/encryption";
 import { isBypassUser } from "@/lib/workspace";
+import { resolveOrCreateContact } from "@/lib/contact-resolver";
+import { revalidatePath } from "next/cache";
+import { resolveOpenConversation } from "@/lib/conversation-resolver";
 
 export const runtime = "nodejs";
 
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
       const signature = req.headers.get('x-signature') || req.headers.get('x-evolution-signature');
       
       if (!signature) {
-        console.warn(`[WEBHOOK] Missing signature for instance ${instance} (ID: ${requestId}) - Bypassing for v2 compatibility`);
+        // [WEBHOOK] Signatures are bypassed for Evolution v2 if missing
         // Proceeding anyway for Evolution v2 compatibility
       } else {
         const isValidSignature = verifyWebhookSignature(rawBody, signature, connection.webhookSecret);
@@ -137,6 +140,11 @@ export async function POST(req: NextRequest) {
       const name = (!isOutbound && data.pushName) ? data.pushName : phone;
       const orgId = connection.organizationId;
       const waMessageId = key.id;
+      const waMessagePayload = {
+        key,
+        message: data.message,
+        messageType: data.messageType || null,
+      };
 
       console.log(`[WEBHOOK] Message received from ${phone} (ID: ${requestId})`);
 
@@ -147,6 +155,14 @@ export async function POST(req: NextRequest) {
       
       if (existingMessage) {
         console.log(`[WEBHOOK] Message already processed (waMessageId: ${waMessageId}, ID: ${requestId})`);
+
+        await prisma.message.update({
+          where: { id: existingMessage.id },
+          data: {
+            waMessageKey: key,
+            waMessagePayload,
+          },
+        }).catch(err => console.error('Failed to update duplicate message payload:', err));
         
         // Log duplicate message
         await prisma.integrationLog.create({
@@ -164,48 +180,38 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        // Fetch Avatar URL (optional, don't block if fails)
-        let avatarUrl = null;
-        if (connection.instanceToken) {
+        const nameToUse = (!isOutbound && data.pushName) ? data.pushName : undefined;
+        const contactResolution = await resolveOrCreateContact({
+          organizationId: orgId,
+          phone,
+          name: nameToUse || name,
+          assignedUserId: connection.userId || null,
+          source: 'WhatsApp Evolution',
+        });
+        const dbContact = contactResolution.contact;
+
+        if (!dbContact.avatarUrl && connection.instanceToken) {
           try {
-            const token = decryptToken(connection.instanceToken);
-            avatarUrl = await evolution.fetchProfilePictureUrl(instance, token, phone);
-          } catch (e) {
-            console.warn(`[WEBHOOK] Failed to fetch avatar for ${phone}`);
+            await inngest.send({
+              name: "whatsapp/profile-picture.requested",
+              data: {
+                contactId: dbContact.id,
+                organizationId: orgId,
+                instanceName: instance,
+                phone,
+              },
+            });
+          } catch (inngestError) {
+            console.warn(`[WEBHOOK] Inngest profile picture event failed: ${inngestError instanceof Error ? inngestError.message : 'Unknown'}`);
           }
         }
 
-        // Upsert contact
-        const nameToUse = (!isOutbound && data.pushName) ? data.pushName : undefined;
-        
-        const dbContact = await prisma.contact.upsert({
-          where: { phone_organizationId: { phone, organizationId: orgId } },
-          update: { 
-            ...(nameToUse ? { name: nameToUse } : {}),
-            ...(avatarUrl ? { avatarUrl } : {})
-          },
-          create: {
-            phone,
-            name: nameToUse || name, // Fallback to current name variable if first time
-            organizationId: orgId,
-            avatarUrl
-          },
-        });
-
-        // Find or create conversation
-        const conversation = await prisma.conversation.findFirst({
-          where: { contactId: dbContact.id, status: "OPEN" },
-          orderBy: { updatedAt: "desc" },
-        });
-
-        const activeConversation = conversation || await prisma.conversation.create({
-          data: {
-            contactId: dbContact.id,
-            status: "OPEN",
-            stage: "PRIMEIRO_CONTATO",
-            temperature: "COLD",
-            lastMessageAt: new Date(),
-          },
+        const activeConversation = await resolveOpenConversation({
+          contactId: dbContact.id,
+          whatsAppConnectionId: connection.id,
+          stage: "PRIMEIRO_CONTATO",
+          temperature: "COLD",
+          lastMessageAt: new Date(),
         });
 
         // Extract message content (robust extraction for v2)
@@ -290,16 +296,27 @@ export async function POST(req: NextRequest) {
           finalContent = JSON.stringify({ contacts: parsedContacts });
         }
 
-        // Create message record
-        const newMessage = await prisma.message.create({
-          data: {
+        // Create or reuse message record. Evolution can deliver the same webhook more than once.
+        const newMessage = await prisma.message.upsert({
+          where: { waMessageId },
+          update: {
+            waMessageKey: key,
+            waMessagePayload,
+            ...(type !== "TEXT" ? { mediaStatus: "PENDING" } : {}),
+            whatsAppConnectionId: connection.id,
+          },
+          create: {
             conversationId: activeConversation.id,
             direction: isOutbound ? "OUTBOUND" : "INBOUND",
             type: type,
             content: finalContent || fallbackLabels[type] || "Mensagem recebida",
             mediaUrl: mediaUrl,
             waMessageId,
+            waMessageKey: key,
+            waMessagePayload,
+            mediaStatus: type !== "TEXT" ? "PENDING" : "NONE",
             timestamp: new Date(),
+            whatsAppConnectionId: connection.id,
           },
         });
 
@@ -308,6 +325,9 @@ export async function POST(req: NextRequest) {
           where: { id: activeConversation.id },
           data: { lastMessageAt: newMessage.timestamp },
         });
+
+        revalidatePath('/contacts');
+        revalidatePath('/conversations');
 
         // Queue AI analysis or Media processing (non-blocking)
         if (type !== "TEXT") {
@@ -318,6 +338,8 @@ export async function POST(req: NextRequest) {
               data: {
                 messageId: newMessage.id,
                 waMessageId,
+                waMessageKey: key,
+                message: data.message,
                 conversationId: activeConversation.id,
                 organizationId: orgId,
                 instanceName: instance,
@@ -393,6 +415,7 @@ export async function POST(req: NextRequest) {
                 isEdited: true
               }
             }).catch(err => console.error('Failed to update edited message:', err));
+            revalidatePath('/conversations');
           }
         }
         
@@ -414,6 +437,7 @@ export async function POST(req: NextRequest) {
               where: { waMessageId },
               data: { status: newStatus }
             }).catch(err => console.error('Failed to update message status:', err));
+            revalidatePath('/conversations');
           }
         }
       }
@@ -422,14 +446,14 @@ export async function POST(req: NextRequest) {
 
     // Handle connection status events
     if (event === "connection.update") {
-      const connectionStatus = data.status;
+      const connectionStatus = data.state || data.status || data.connection;
       console.log(`[WEBHOOK] Connection update: ${connectionStatus} (ID: ${requestId})`);
 
       await prisma.whatsAppConnection.update({
         where: { id: connection.id },
         data: {
-          status: connectionStatus === 'open' ? 'CONNECTED' : 'DISCONNECTED',
-          lastConnectedAt: connectionStatus === 'open' ? new Date() : connection.lastConnectedAt
+          status: (connectionStatus === 'open' || connectionStatus === 'CONNECTED') ? 'CONNECTED' : 'DISCONNECTED',
+          lastConnectedAt: (connectionStatus === 'open' || connectionStatus === 'CONNECTED') ? new Date() : connection.lastConnectedAt
         }
       }).catch(err => console.error('Failed to update connection status:', err));
 
@@ -438,7 +462,7 @@ export async function POST(req: NextRequest) {
         data: {
           connectionId: connection.id,
           event: 'CONNECTION_UPDATE',
-          payload: { status: connectionStatus },
+          payload: data,
         }
       }).catch(err => console.error('Failed to log webhook:', err));
     }

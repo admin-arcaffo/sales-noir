@@ -99,6 +99,10 @@ export const AnalysisResponseSchema = {
         type: "string",
         description: "Ação imediata recomendada para mover o lead de estágio."
       },
+      timeWindow: {
+        type: "string",
+        description: "Janela de tempo sugerida para executar o próximo passo. Exemplos: hoje, amanhã, 24 horas, 2 dias."
+      },
       suggestedReplies: {
         type: "object",
         properties: {
@@ -123,6 +127,7 @@ export const AnalysisResponseSchema = {
       "recommendedPosture", 
       "whatToAvoid", 
       "nextConcreteStep", 
+      "timeWindow",
       "suggestedReplies"
     ],
     additionalProperties: false
@@ -142,6 +147,7 @@ export type AnalysisResponse = {
   recommendedPosture: string;
   whatToAvoid: string;
   nextConcreteStep: string;
+  timeWindow: string;
   suggestedReplies: {
     direct: string;
     consultative: string;

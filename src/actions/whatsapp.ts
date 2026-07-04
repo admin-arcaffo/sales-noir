@@ -9,9 +9,9 @@ import { encryptToken, generateWebhookSecret } from '@/lib/encryption';
 const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_ATTEMPTS_PER_DAY = 5;
 
-async function checkRateLimit(orgId: string): Promise<{ allowed: boolean; error?: string }> {
+async function checkRateLimit(orgId: string, userId: string): Promise<{ allowed: boolean; error?: string }> {
   const connection = await prisma.whatsAppConnection.findFirst({
-    where: { organizationId: orgId }
+    where: { organizationId: orgId, userId }
   });
 
   if (!connection) {
@@ -45,7 +45,7 @@ export async function createWhatsAppInstance() {
     const orgId = workspace.organizationId;
 
     // Check rate limiting
-    const rateLimitCheck = await checkRateLimit(orgId);
+    const rateLimitCheck = await checkRateLimit(orgId, workspace.id);
     if (!rateLimitCheck.allowed) {
       console.warn(`Rate limit exceeded for org ${orgId}: ${rateLimitCheck.error}`);
       return { error: rateLimitCheck.error || "Too many connection attempts. Please try again later." };
@@ -92,8 +92,17 @@ export async function createWhatsAppInstance() {
     
     // Look for existing connection
     const existingConnection = await prisma.whatsAppConnection.findFirst({
-      where: { organizationId: orgId }
+      where: { organizationId: orgId, userId: workspace.id }
     });
+
+    if (existingConnection && existingConnection.instanceName) {
+      try {
+        console.log(`Deletando instância antiga da Evolution API para evitar vazamento: ${existingConnection.instanceName}`);
+        await evolution.deleteInstance(existingConnection.instanceName);
+      } catch (err) {
+        console.warn(`Erro ao deletar instância antiga ${existingConnection.instanceName}:`, err);
+      }
+    }
 
     const data = {
       provider: 'EVOLUTION',
@@ -116,7 +125,8 @@ export async function createWhatsAppInstance() {
       await prisma.whatsAppConnection.create({
         data: {
           ...data,
-          organizationId: orgId
+          organizationId: orgId,
+          userId: workspace.id
         }
       });
     }
@@ -148,6 +158,7 @@ export async function getWhatsAppQrCode(instanceName: string) {
     const connection = await prisma.whatsAppConnection.findFirst({
       where: { 
         organizationId: workspace.organizationId,
+        userId: workspace.id,
         instanceName: instanceName
       }
     });
@@ -156,15 +167,7 @@ export async function getWhatsAppQrCode(instanceName: string) {
       return { error: "Instância não encontrada." };
     }
 
-    // Check if QR code has expired (valid for ~120 seconds)
-    const qrCreatedAt = connection.qrCodeCreatedAt?.getTime() || 0;
-    const now = Date.now();
-    const qrAge = now - qrCreatedAt;
-    const QR_EXPIRY_MS = 120 * 1000; // 120 seconds
-
-    if (qrAge > QR_EXPIRY_MS) {
-      return { error: "QR Code expirado. Gere um novo.", expired: true };
-    }
+    // Removed local QR code expiration check. We'll always attempt to get the latest from Evolution API.
 
     // Decrypt the token before using it
     const { decryptToken } = await import('@/lib/encryption');
@@ -190,6 +193,7 @@ export async function getWhatsAppStatus() {
     const connection = await prisma.whatsAppConnection.findFirst({
       where: { 
         organizationId: workspace.organizationId,
+        userId: workspace.id,
         provider: 'EVOLUTION'
       }
     });
@@ -244,6 +248,7 @@ export async function disconnectWhatsApp(deleteHistory = false) {
     const connection = await prisma.whatsAppConnection.findFirst({
       where: { 
         organizationId: workspace.organizationId,
+        userId: workspace.id,
         provider: 'EVOLUTION'
       }
     });
@@ -272,14 +277,30 @@ export async function disconnectWhatsApp(deleteHistory = false) {
     }
 
     if (deleteHistory) {
-      // Delete all conversations for the organization (cascadingly deletes messages & analyses)
-      await prisma.conversation.deleteMany({
-        where: {
-          contact: {
-            organizationId: workspace.organizationId
-          }
-        }
+      // Isolar exclusão apenas para conversas pertencentes à conexão sendo desconectada
+      const userConversations = await prisma.conversation.findMany({
+        where: { whatsAppConnectionId: connection.id },
+        select: { id: true }
       });
+      
+      const conversationIds = userConversations.map(c => c.id);
+      
+      if (conversationIds.length > 0) {
+        // Deletar apenas histórico de mensagens e análises de IA (mantém registros e estágios intactos no pipeline)
+        await prisma.message.deleteMany({
+          where: { conversationId: { in: conversationIds } }
+        });
+        
+        await prisma.aIAnalysis.deleteMany({
+          where: { conversationId: { in: conversationIds } }
+        });
+        
+        // Resetar tempo da última mensagem, mantendo a conversa e seu estágio intactos
+        await prisma.conversation.updateMany({
+          where: { id: { in: conversationIds } },
+          data: { lastMessageAt: null }
+        });
+      }
     }
 
     // Delete the WhatsApp Connection record entirely to allow a completely fresh setup

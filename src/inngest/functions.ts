@@ -22,7 +22,49 @@ const getOpenAI = () => {
 const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || "";
 
 import { decryptToken } from "@/lib/encryption";
-import { evolution } from "@/lib/evolution";
+import { evolution, resolveEvolutionMediaPayload } from "@/lib/evolution";
+import { saveMessageMediaFromBase64 } from "@/lib/media-storage";
+
+export const updateWhatsAppProfilePicture = inngest.createFunction(
+  {
+    id: "update-whatsapp-profile-picture",
+    name: "Atualização de Foto de Perfil WhatsApp",
+    retries: 2,
+    triggers: [{ event: "whatsapp/profile-picture.requested" }],
+  },
+  async ({ event, step }) => {
+    const { contactId, organizationId, instanceName, phone } = event.data;
+
+    const connection = await step.run("fetch-connection", async () => {
+      return prisma.whatsAppConnection.findFirst({
+        where: { organizationId, instanceName },
+        select: { instanceToken: true },
+      });
+    });
+
+    if (!connection?.instanceToken) {
+      return { success: false, reason: "missing-token", contactId };
+    }
+
+    const avatarUrl = await step.run("fetch-profile-picture-url", async () => {
+      const token = decryptToken(connection.instanceToken!);
+      return evolution.fetchProfilePictureUrl(instanceName, token, phone);
+    });
+
+    if (!avatarUrl) {
+      return { success: false, reason: "no-avatar", contactId };
+    }
+
+    await step.run("save-profile-picture-url", async () => {
+      await prisma.contact.updateMany({
+        where: { id: contactId, organizationId, avatarUrl: null },
+        data: { avatarUrl },
+      });
+    });
+
+    return { success: true, contactId };
+  }
+);
 
 export const processMediaMessage = inngest.createFunction(
   { 
@@ -32,41 +74,126 @@ export const processMediaMessage = inngest.createFunction(
     triggers: [{ event: "whatsapp/media.received" }],
   },
   async ({ event, step }) => {
-    const { messageId, waMessageId, conversationId, organizationId, instanceName, type } = event.data;
+    const { messageId, waMessageId, waMessageKey, message: webhookMessage, conversationId, organizationId, instanceName, type, provider, mediaId, fileName } = event.data;
 
     // 1. Fetch connection to get token
     const connection = await step.run("fetch-connection", async () => {
-      const waConnection = await prisma.whatsAppConnection.findFirst({
-        where: { organizationId, instanceName, status: "CONNECTED" },
-      });
+      const waConnection = provider === "META"
+        ? await prisma.whatsAppConnection.findFirst({ where: { organizationId, provider: "META", status: "CONNECTED" } })
+        : await prisma.whatsAppConnection.findFirst({ where: { organizationId, instanceName, status: "CONNECTED" } });
 
-      if (!waConnection || !waConnection.instanceToken) {
+      if (!waConnection || (!waConnection.instanceToken && !waConnection.accessToken)) {
         throw new Error("WhatsApp connection not configured or missing token");
       }
 
-      return { instanceToken: waConnection.instanceToken };
+      return { instanceToken: waConnection.instanceToken, accessToken: waConnection.accessToken };
     });
 
     try {
-      // 2. Fetch media base64 from Evolution
-      const mediaResult = await step.run("fetch-media-base64", async () => {
-        const token = decryptToken(connection.instanceToken);
-        return await evolution.getBase64FromMediaMessage(instanceName, token, waMessageId);
-      });
-
-      if (!mediaResult || !mediaResult.base64) {
-        throw new Error("No media returned from Evolution API");
-      }
-
-      const mediaUrl = `data:${mediaResult.mimetype};base64,${mediaResult.base64}`;
-
-      // 3. Update message with media URL
-      await step.run("update-message-media", async () => {
+      await step.run("mark-media-processing", async () => {
         await prisma.message.update({
           where: { id: messageId },
-          data: { mediaUrl }
+          data: {
+            mediaStatus: "PROCESSING",
+            mediaError: null,
+            mediaAttempts: { increment: 1 },
+            mediaLastAttemptAt: new Date(),
+            ...(waMessageKey ? { waMessageKey } : {}),
+          },
         });
       });
+
+      // 1.5. Check if media already exists in database (e.g. rescued on-the-fly)
+      const existingMedia = await step.run("check-existing-media", async () => {
+        return await prisma.media.findUnique({
+          where: { messageId },
+        });
+      });
+
+      const storedMessage = await step.run("fetch-stored-message-payload", async () => {
+        return prisma.message.findUnique({
+          where: { id: messageId },
+          select: { waMessagePayload: true, waMessageKey: true, waMessageId: true },
+        });
+      });
+
+      let mediaResult: { base64: string; mimetype: string } | null = null;
+
+      if (existingMedia) {
+        mediaResult = await step.run("read-existing-media", async () => {
+          const { readStoredMediaBase64 } = await import("@/lib/media-storage");
+          const base64 = await readStoredMediaBase64(existingMedia.storageKey);
+          return {
+            base64,
+            mimetype: existingMedia.mimeType,
+          };
+        });
+      } else {
+        // 2. Fetch media base64 from Evolution
+        mediaResult = await step.run("fetch-media-base64", async () => {
+          // Se a Evolution enviar o base64 direto no payload do webhook, usamos ele
+          if (webhookMessage && typeof webhookMessage === 'object') {
+            if (webhookMessage.base64) {
+              return {
+                base64: webhookMessage.base64,
+                mimetype: webhookMessage.mimetype || "application/octet-stream"
+              };
+            }
+            const msgKeys = Object.keys(webhookMessage);
+            for (const key of msgKeys) {
+              if (webhookMessage[key] && typeof webhookMessage[key] === 'object' && webhookMessage[key].base64) {
+                return {
+                  base64: webhookMessage[key].base64,
+                  mimetype: webhookMessage[key].mimetype || webhookMessage[key].mimeType || "application/octet-stream"
+                };
+              }
+            }
+          }
+
+          if (provider === "META") {
+            const { getWhatsAppMediaUrl, downloadWhatsAppMedia } = await import("@/lib/whatsapp");
+            const rawToken = connection.accessToken;
+            if (!rawToken || !mediaId) throw new Error("Meta media token or mediaId missing");
+            const token = decryptToken(rawToken);
+            const mediaUrl = await getWhatsAppMediaUrl(token, mediaId);
+            const mediaBuffer = await downloadWhatsAppMedia(token, mediaUrl);
+            return {
+              base64: mediaBuffer.toString("base64"),
+              mimetype: "application/octet-stream",
+            };
+          }
+
+          if (!connection.instanceToken) throw new Error("Evolution instance token missing");
+          const token = decryptToken(connection.instanceToken);
+          const resolvedKey = waMessageKey || storedMessage?.waMessageKey;
+          const resolvedId = waMessageId || storedMessage?.waMessageId;
+          const primaryPayload = storedMessage?.waMessagePayload || (resolvedKey && webhookMessage
+            ? { key: resolvedKey, message: webhookMessage }
+            : resolvedKey || resolvedId);
+          const result = await evolution.getBase64FromMediaMessage(instanceName, token, primaryPayload, 30000);
+          if (!result || !result.base64) {
+            console.warn(`[PROCESS MEDIA] First attempt failed, retrying with reconstructed payload`);
+            const fallbackPayload = await resolveEvolutionMediaPayload(instanceName, token, resolvedKey, resolvedId, storedMessage?.waMessagePayload);
+            return await evolution.getBase64FromMediaMessage(instanceName, token, fallbackPayload, 60000);
+          }
+          return result;
+        });
+
+        if (!mediaResult || !mediaResult.base64) {
+          throw new Error("No media returned from Evolution API");
+        }
+
+        // 3. Persist media outside the Message row. The UI reads it through /api/media/[messageId].
+        await step.run("store-message-media", async () => {
+          await saveMessageMediaFromBase64({
+            organizationId,
+            messageId,
+            base64: mediaResult!.base64,
+            mimeType: mediaResult!.mimetype,
+            originalFileName: fileName || null,
+          });
+        });
+      }
 
       // Se não for áudio, encerramos aqui e acionamos a análise
       if (type !== "AUDIO") {
@@ -150,6 +277,16 @@ export const processMediaMessage = inngest.createFunction(
       
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Unknown error during media/transcription processing";
+      await step.run("mark-media-failed", async () => {
+        await prisma.message.update({
+          where: { id: messageId },
+          data: {
+            mediaStatus: "FAILED",
+            mediaError: message,
+            mediaLastAttemptAt: new Date(),
+          },
+        }).catch(() => null);
+      });
       
       // Handle failure for audio
       if (type === "AUDIO") {
@@ -340,10 +477,17 @@ export const analyzeConversation = inngest.createFunction(
 
       const newTemp = classificationToTemperature[analysisResult.leadClassification] || conversation.temperature;
       const newStage = analysisResult.stage || conversation.stage;
+      const stageLower = newStage.toLowerCase();
+      const isLostStage = stageLower.includes("perdido") || stageLower.includes("lost") || stageLower === "cliente_perdido";
 
       await prisma.conversation.update({
         where: { id: conversationId },
         data: { temperature: newTemp, stage: newStage },
+      });
+
+      await prisma.contact.update({
+        where: { id: conversation.contactId },
+        data: { isLead: !isLostStage },
       });
     });
 

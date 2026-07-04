@@ -16,6 +16,66 @@ const GLOBAL_API_KEY = process.env.EVOLUTION_API_KEY;
 if (!API_URL) console.warn('[Evolution API] EVOLUTION_API_URL is not set');
 if (!GLOBAL_API_KEY) console.warn('[Evolution API] EVOLUTION_API_KEY is not set');
 
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function normalizeEvolutionMediaPayload(value: any) {
+  if (typeof value === "string") return { key: { id: value } };
+  if (!isRecord(value)) return value;
+
+  if (isRecord(value.key) && isRecord(value.message)) return { key: value.key, message: value.message };
+  if (isRecord(value.message) && isRecord(value.message.key) && isRecord(value.message.message)) {
+    return { key: value.message.key, message: value.message.message };
+  }
+  if (isRecord(value.data) && isRecord(value.data.key) && isRecord(value.data.message)) {
+    return { key: value.data.key, message: value.data.message };
+  }
+  if (isRecord(value.record) && isRecord(value.record.key) && isRecord(value.record.message)) {
+    return { key: value.record.key, message: value.record.message };
+  }
+
+  return value;
+}
+
+function hasCompleteEvolutionMediaPayload(value: any) {
+  const normalized = normalizeEvolutionMediaPayload(value);
+  return isRecord(normalized?.key) && isRecord(normalized?.message);
+}
+
+function getEvolutionRecordId(record: any): string | null {
+  const normalized = normalizeEvolutionMediaPayload(record);
+  return normalized?.key?.id || record?.key?.id || record?.message?.key?.id || record?.id || null;
+}
+
+function getEvolutionRemoteJid(value: any): string | null {
+  const normalized = normalizeEvolutionMediaPayload(value);
+  return normalized?.key?.remoteJid || value?.remoteJid || value?.key?.remoteJid || value?.message?.key?.remoteJid || null;
+}
+
+export async function resolveEvolutionMediaPayload(
+  instanceName: string,
+  instanceToken: string,
+  waMessageKey: any,
+  waMessageId?: string | null,
+  waMessagePayload?: any,
+) {
+  const storedPayload = normalizeEvolutionMediaPayload(waMessagePayload);
+  if (hasCompleteEvolutionMediaPayload(storedPayload)) return storedPayload;
+
+  const keyPayload = normalizeEvolutionMediaPayload(waMessageKey);
+  if (hasCompleteEvolutionMediaPayload(keyPayload)) return keyPayload;
+
+  const remoteJid = getEvolutionRemoteJid(keyPayload) || getEvolutionRemoteJid(waMessageKey);
+
+  if (waMessageId) {
+    const found = await evolution.findMessageById(instanceName, instanceToken, waMessageId, remoteJid);
+    if (found) return normalizeEvolutionMediaPayload(found);
+  }
+
+  return keyPayload || waMessageId;
+}
+
 /**
  * Cliente para integração com Evolution API v2
  */
@@ -154,6 +214,7 @@ export const evolution = {
    * Envia uma mensagem de texto
    */
   sendText: async (instanceName: string, instanceToken: string, to: string, text: string) => {
+    if (!API_URL) throw new Error("Evolution API not configured (EVOLUTION_API_URL missing)");
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
@@ -190,8 +251,9 @@ export const evolution = {
    * Envia arquivo multimídia (Imagem, Áudio, Documento, Vídeo)
    */
   sendMedia: async (instanceName: string, instanceToken: string, to: string, base64: string, mediatype: string, mimetype: string, caption?: string, fileName?: string) => {
+    if (!API_URL) throw new Error("Evolution API not configured (EVOLUTION_API_URL missing)");
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch(`${API_URL}/message/sendMedia/${instanceName}`, {
         method: "POST",
@@ -504,10 +566,16 @@ export const evolution = {
    * Busca o conteúdo base64 de uma mensagem de mídia usando o ID da mensagem.
    * Este é o método correto para obter mídia — o webhook NÃO envia base64 inline.
    */
-  getBase64FromMediaMessage: async (instanceName: string, instanceToken: string, messageId: string): Promise<{ base64: string; mimetype: string } | null> => {
+  getBase64FromMediaMessage: async (instanceName: string, instanceToken: string, messageObjOrId: any, timeoutMs = 30000): Promise<{ base64: string; mimetype: string } | null> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const messageBody = normalizeEvolutionMediaPayload(messageObjOrId);
+
+      if (isRecord(messageBody) && !messageBody.message) {
+        console.warn(`[EVOLUTION] Media payload has no message body; getBase64FromMediaMessage may fail for ${messageBody.key?.id || messageBody.id || 'unknown-id'}`);
+      }
+
       const response = await fetch(`${API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
         method: "POST",
         headers: {
@@ -515,26 +583,24 @@ export const evolution = {
           "apikey": instanceToken,
         },
         body: JSON.stringify({
-          message: {
-            key: {
-              id: messageId,
-            },
-          },
+          message: messageBody,
         }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
-        console.warn(`[EVOLUTION] Failed to fetch media base64: HTTP ${response.status}`);
+        const body = await response.text().catch(() => '');
+        console.warn(`[EVOLUTION] Failed to fetch media base64: HTTP ${response.status} ${body}`);
         return null;
       }
 
       const data = await response.json();
-      // A API retorna { base64: "...", mimetype: "..." }
-      if (data?.base64) {
+      const base64 = data?.base64 || data?.data?.base64 || data?.result?.base64;
+      const mimetype = data?.mimetype || data?.mimeType || data?.data?.mimetype || data?.data?.mimeType || data?.result?.mimetype || data?.result?.mimeType;
+      if (base64) {
         return {
-          base64: data.base64,
-          mimetype: data.mimetype || "application/octet-stream",
+          base64,
+          mimetype: mimetype || "application/octet-stream",
         };
       }
       return null;
@@ -634,7 +700,19 @@ export const evolution = {
       }
 
       const data = await response.json();
-      const messages = Array.isArray(data) ? data : (data.messages || []);
+      let messages: any[] = [];
+      if (Array.isArray(data)) {
+        messages = data;
+      } else if (data && typeof data === "object") {
+        if (Array.isArray(data.messages)) {
+          messages = data.messages;
+        } else if (data.messages && Array.isArray(data.messages.records)) {
+          messages = data.messages.records;
+        } else if (Array.isArray(data.records)) {
+          messages = data.records;
+        }
+      }
+      
       // API may return all messages or limited. We limit locally just in case.
       return messages.slice(-limit); 
     } catch (e) {
@@ -643,5 +721,57 @@ export const evolution = {
     } finally {
       clearTimeout(timeoutId);
     }
+  },
+
+  /**
+   * Busca uma mensagem específica. Necessário para recuperar documentos/mídias antigas.
+   */
+  findMessageById: async (instanceName: string, instanceToken: string, waMessageId: string, remoteJid?: string | null) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const parseMessages = (data: any): any[] => {
+      if (Array.isArray(data)) return data;
+      if (!data || typeof data !== "object") return [];
+      if (Array.isArray(data.messages)) return data.messages;
+      if (data.messages && Array.isArray(data.messages.records)) return data.messages.records;
+      if (Array.isArray(data.records)) return data.records;
+      return [];
+    };
+
+    try {
+      const attempts = [
+        ...(remoteJid ? [{ where: { key: { remoteJid, id: waMessageId } } }] : []),
+        { where: { key: { id: waMessageId } } },
+      ];
+
+      for (const body of attempts) {
+        const response = await fetch(`${API_URL}/chat/findMessages/${instanceName}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": instanceToken,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) continue;
+        const records = parseMessages(await response.json());
+        const found = records.find((record) => getEvolutionRecordId(record) === waMessageId);
+        if (found) return found;
+        if (records.length === 1) return records[0];
+      }
+    } catch (e) {
+      console.warn(`[Evolution] findMessageById failed for ${waMessageId}. ${e}`);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (remoteJid) {
+      const records = await evolution.findMessages(instanceName, instanceToken, remoteJid, 300);
+      return records.find((record: any) => getEvolutionRecordId(record) === waMessageId) || null;
+    }
+
+    return null;
   }
 };

@@ -44,6 +44,15 @@ npm run db:seed
 - `WHATSAPP_ACCESS_TOKEN`
 - `INNGEST_EVENT_KEY`
 - `INNGEST_SIGNING_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+## Storage de midia
+
+- `SUPABASE_STORAGE_BUCKET` define o bucket usado para arquivos de WhatsApp. O padrao e `whatsapp-media`.
+- `MAX_WHATSAPP_MEDIA_BYTES` define o tamanho maximo de upload via app. O padrao e 20 MB.
+- Em desenvolvimento, se `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` nao estiverem configuradas, o app usa `.media/` local como fallback.
+- Em producao, configure Supabase Storage. O fallback local e bloqueado para evitar arquivos efemeros em serverless.
 
 Para deploy serverless na Vercel com Supabase, use no `DATABASE_URL` a connection string do pooler transaction mode na porta `6543` com `pgbouncer=true`.
 

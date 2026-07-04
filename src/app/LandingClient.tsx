@@ -225,7 +225,31 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#040406] text-zinc-200 overflow-x-hidden font-sans relative">
+    <div className="dark min-h-screen bg-[#040406] text-zinc-200 overflow-x-hidden font-sans relative">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            "name": "Sales Arcaffo",
+            "operatingSystem": "Web",
+            "applicationCategory": "BusinessApplication",
+            "description": "O assistente definitivo de vendas e negociações para WhatsApp Business. Maximize suas conversões com nossa inteligência artificial.",
+            "url": "https://sales.arcaffo.com",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "BRL"
+            },
+            "publisher": {
+              "@type": "Organization",
+              "name": "Arcaffo",
+              "url": "https://sales.arcaffo.com"
+            }
+          })
+        }}
+      />
       {/* Subtle Structural Grid Overlay */}
       <div className="absolute inset-0 pointer-events-none z-0 bg-[linear-gradient(to_right,#0c0c0f_1px,transparent_1px),linear-gradient(to_bottom,#0c0c0f_1px,transparent_1px)] bg-[size:5rem_5rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_65%,transparent_100%)] opacity-35" />
 
@@ -761,7 +785,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
           
           {/* Monthly Licence */}
           <div className="border border-zinc-850 rounded bg-[#070709] p-6 flex flex-col justify-between space-y-6">
@@ -785,6 +809,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
 
               <ul className="space-y-3.5 border-t border-zinc-900 pt-4">
                 {[
+                  "Até 5 usuários",
                   "Copiloto cognitivo de IA ativo",
                   "Kanban com colunas ocultáveis",
                   "Integração Evolution API inclusa",
@@ -837,6 +862,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
 
               <ul className="space-y-3.5 border-t border-zinc-900 pt-4">
                 {[
+                  "Até 5 usuários",
                   "Todos os recursos do plano mensal",
                   "Acesso prioritário a novas ferramentas",
                   "Mentoria de setup operacional (1 call)",
@@ -856,6 +882,50 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
             >
               {isSignedIn ? "Ir para o Painel" : "Iniciar Plano Anual"}
             </Link>
+          </div>
+
+          {/* Enterprise Plan */}
+          <div className="border border-zinc-800 rounded bg-[#050507] p-6 flex flex-col justify-between space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-[40px] pointer-events-none" />
+            <div className="space-y-4 relative z-10">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-white font-bold text-xs uppercase tracking-wider">Enterprise</h3>
+                  <p className="text-[9px] text-zinc-500">Para equipes com mais de 5 usuários</p>
+                </div>
+                <span className="text-[8px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-400">Sob medida</span>
+              </div>
+
+              <div>
+                <div className="flex items-baseline gap-1 pt-2 pb-1">
+                  <span className="text-white text-2xl font-extrabold tracking-tight">Personalizado</span>
+                </div>
+                <p className="text-[8px] text-zinc-600 mt-1">Faturamento adequado à sua operação</p>
+              </div>
+
+              <ul className="space-y-3.5 border-t border-zinc-900 pt-4">
+                {[
+                  "Usuários ilimitados",
+                  "Todos os recursos do plano anual",
+                  "Onboarding dedicado",
+                  "Suporte prioritário"
+                ].map((feature, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-[10px] text-zinc-300 font-medium">{feature}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <a
+              href="https://wa.me/5567982226166?text=Oi%2C%20quero%20saber%20mais%20do%20plano%20Enterprise%20do%20CRM%20para%20melhorar%20o%20meu%20time%20de%20vendas"
+              target="_blank"
+              rel="noreferrer"
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-bold text-center block uppercase tracking-wider transition-all relative z-10"
+            >
+              Falar com Consultor
+            </a>
           </div>
 
         </div>

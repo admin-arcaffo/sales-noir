@@ -139,6 +139,7 @@ ${formattedHistory}
         recommendedPosture: "Evite focar no preço agora. Ancore o valor da entrega garantida no prazo, mostrando o custo de oportunidade de um projeto mal feito.",
         whatToAvoid: "Não ofereça desconto direto. Não justifique a demora de forma defensiva.",
         nextConcreteStep: "Ligar para o lead para explicar o processo de aceleração e segurança da entrega.",
+        timeWindow: "24 horas",
         suggestedReplies: {
           direct: "Entendo a urgência do prazo. Se conseguirmos reduzir a entrega para 15 dias usando uma alocação extra, você consegue avançar no valor atual hoje?",
           consultative: "Faz sentido a preocupação com o prazo. Pela minha experiência, quem acelera esse processo acaba pulando a fase de discovery e entregando errado. O quão crítico é esse prazo frente a qualidade?",
@@ -218,6 +219,10 @@ ${formattedHistory}
             type: "string",
             description: "Ação imediata recomendada para mover o lead de estágio."
           },
+          timeWindow: {
+            type: "string",
+            description: "Janela de tempo sugerida para executar o próximo passo. Exemplos: hoje, amanhã, 24 horas, 2 dias."
+          },
           suggestedReplies: {
             type: "object",
             properties: {
@@ -242,6 +247,7 @@ ${formattedHistory}
           "recommendedPosture", 
           "whatToAvoid", 
           "nextConcreteStep", 
+          "timeWindow",
           "suggestedReplies"
         ],
         additionalProperties: false

@@ -1,0 +1,8 @@
+# Ignored by Vercel deployments
+.git
+.github
+.husky
+.vscode
+.DS_Store
+PERFORMANCE_PLAN.md
+*.log

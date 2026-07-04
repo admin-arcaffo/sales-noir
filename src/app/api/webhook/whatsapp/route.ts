@@ -3,6 +3,9 @@ import prisma from "@/lib/prisma";
 import { inngest } from "@/inngest/client";
 import { getWhatsAppWorkspaceByPhoneNumberId, isBypassUser } from "@/lib/workspace";
 import { verifyWebhookSignature } from "@/lib/encryption";
+import { resolveOrCreateContact } from "@/lib/contact-resolver";
+import { revalidatePath } from "next/cache";
+import { resolveOpenConversation } from "@/lib/conversation-resolver";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -146,34 +149,21 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        // 1. Upsert do Contato (Cria se não existir)
-        const dbContact = await prisma.contact.upsert({
-          where: { phone_organizationId: { phone, organizationId: orgId } },
-          update: { name },
-          create: {
-            phone,
-            name,
-            organizationId: orgId
-          },
+        const contactResolution = await resolveOrCreateContact({
+          organizationId: orgId,
+          phone,
+          name,
+          assignedUserId: connection.userId || null,
+          source: 'WhatsApp Meta',
         });
+        const dbContact = contactResolution.contact;
 
-        // 2. Garante que existe uma conversa aberta para o contato
-        const conversation = await prisma.conversation.findFirst({
-          where: {
-            contactId: dbContact.id,
-            status: "OPEN",
-          },
-          orderBy: { updatedAt: "desc" },
-        });
-
-        const activeConversation = conversation || await prisma.conversation.create({
-          data: {
-            contactId: dbContact.id,
-            status: "OPEN",
-            stage: "PRIMEIRO_CONTATO",
-            temperature: "COLD",
-            lastMessageAt: new Date(),
-          },
+        const activeConversation = await resolveOpenConversation({
+          contactId: dbContact.id,
+          whatsAppConnectionId: connection.id,
+          stage: "PRIMEIRO_CONTATO",
+          temperature: "COLD",
+          lastMessageAt: new Date(),
         });
 
         // 3. Salva a mensagem
@@ -184,7 +174,9 @@ export async function POST(req: NextRequest) {
             type: message.type.toUpperCase(),
             content: message.text?.body || "",
             waMessageId,
+            mediaStatus: message.type === "text" ? "NONE" : "PENDING",
             timestamp: new Date(Number(message.timestamp) * 1000 || Date.now()),
+            whatsAppConnectionId: connection.id,
           },
         });
 
@@ -195,13 +187,21 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // 4. Se for ÁUDIO, dispara o Inngest para transcrição
-        if (message.type === "audio") {
+        revalidatePath('/contacts');
+        revalidatePath('/conversations');
+
+        // 4. Se for mídia, dispara o Inngest para baixar/salvar/transcrever quando aplicável
+        const mediaId = message.audio?.id || message.image?.id || message.video?.id || message.document?.id || message.sticker?.id;
+        if (mediaId) {
           await inngest.send({
-            name: "whatsapp/audio.received",
+            name: "whatsapp/media.received",
             data: {
               messageId: newMessage.id,
-              mediaId: message.audio.id,
+              provider: "META",
+              mediaId,
+              type: message.type.toUpperCase(),
+              fileName: message.document?.filename || null,
+              conversationId: activeConversation.id,
               organizationId: orgId,
             },
           });
@@ -246,4 +246,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-

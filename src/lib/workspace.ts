@@ -36,11 +36,28 @@ export async function getCurrentWorkspace() {
     include: { organization: true },
   });
 
-  const clerkUser = await currentUser();
-  const email = clerkUser?.emailAddresses[0]?.emailAddress || `${session.userId}@local`;
-
   if (existingUser) {
-    // Check if there is a pending payment for this email
+    try {
+      const clerkUser = await currentUser();
+      const clerkEmail = clerkUser?.emailAddresses[0]?.emailAddress || null;
+      const clerkFullName = [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ').trim();
+      const clerkName = clerkFullName || clerkUser?.username || null;
+
+      if ((clerkEmail && clerkEmail !== existingUser.email) || (clerkName && clerkName !== existingUser.name)) {
+        existingUser = await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            ...(clerkEmail ? { email: clerkEmail } : {}),
+            ...(clerkName ? { name: clerkName } : {}),
+          },
+          include: { organization: true },
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to sync Clerk user profile:', error);
+    }
+
+    const email = existingUser.email;
     const pendingPayment = await prisma.pendingPayment.findUnique({
       where: { email },
     });
@@ -61,7 +78,6 @@ export async function getCurrentWorkspace() {
       await prisma.pendingPayment.delete({
         where: { id: pendingPayment.id },
       });
-      // Fetch updated user with upgraded plan
       const updatedUser = await prisma.user.findUnique({
         where: { id: existingUser.id },
         include: { organization: true },
@@ -73,14 +89,15 @@ export async function getCurrentWorkspace() {
     return existingUser;
   }
 
-  // Check if user exists by email (happens if they delete and recreate their Clerk account)
+  const clerkUser = await currentUser();
+  const email = clerkUser?.emailAddresses[0]?.emailAddress || `${session.userId}@local`;
+
   existingUser = await prisma.user.findUnique({
     where: { email },
     include: { organization: true },
   });
 
   if (existingUser) {
-    // Check if there is a pending payment for this email
     const pendingPayment = await prisma.pendingPayment.findUnique({
       where: { email },
     });
@@ -105,7 +122,6 @@ export async function getCurrentWorkspace() {
       });
     }
 
-    // Update the existing user with the new clerkId
     return prisma.user.update({
       where: { id: existingUser.id },
       data: updateData,
@@ -116,11 +132,9 @@ export async function getCurrentWorkspace() {
   const fullName = [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(' ').trim();
   const displayName = fullName || clerkUser?.username || email.split('@')[0];
   const baseSlug = slugify(displayName || email.split('@')[0] || 'workspace') || 'workspace';
-  // Use a more unique part of the userId, avoiding the common 'user_' prefix
   const uniqueId = session.userId.replace('user_', '');
   const orgSlug = `${baseSlug}-${uniqueId.slice(0, 8)}`;
 
-  // Check for pending payment to set initial plan
   const pendingPayment = await prisma.pendingPayment.findUnique({
     where: { email },
   });
@@ -172,19 +186,73 @@ export async function getWhatsAppWorkspaceByPhoneNumberId(phoneNumberId: string)
   return connection;
 }
 
-export async function checkSubscriptionStatus() {
-  const workspace = await getCurrentWorkspace();
-  const clerkUser = await currentUser();
+export async function checkSubscriptionStatus(existingWorkspace?: any) {
+  const workspace = existingWorkspace || await getCurrentWorkspace();
   const email = workspace.email;
 
-  const isBypass = await isBypassUser(email, clerkUser);
-  if (isBypass) {
+  // Membros convidados nunca devem ser cobrados — o owner é responsável pelo plano
+  if (workspace.role === 'member') {
     return {
       status: 'active' as const,
       isBypass: true,
       daysRemaining: 999,
       expiresAt: null,
+      workspace,
     };
+  }
+
+  const adminEmails = ['admin@arcaffo.com', 'arthurfava@gmail.com', 'arthur@arcaffo.com.br'];
+  if (adminEmails.includes(email.toLowerCase().trim())) {
+    return {
+      status: 'active' as const,
+      isBypass: true,
+      daysRemaining: 999,
+      expiresAt: null,
+      workspace,
+    };
+  }
+
+  const session = await auth();
+  const publicMetadata = session.sessionClaims?.publicMetadata as { planOverride?: string; role?: string } | undefined;
+  if (publicMetadata?.planOverride === 'unlimited' || publicMetadata?.role === 'admin') {
+    return {
+      status: 'active' as const,
+      isBypass: true,
+      daysRemaining: 999,
+      expiresAt: null,
+      workspace,
+    };
+  }
+
+  if (workspace.organization.plan !== 'free') {
+    const expiresAt = workspace.organization.subscriptionExpiresAt;
+    if (!expiresAt) {
+      return {
+        status: 'active' as const,
+        isBypass: false,
+        daysRemaining: 999,
+        expiresAt: null,
+        workspace,
+      };
+    }
+
+    const now = new Date();
+    const expiresDate = new Date(expiresAt);
+    const diffMs = expiresDate.getTime() - now.getTime();
+    const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    const gracePeriodMs = 5 * 24 * 60 * 60 * 1000;
+    const isExpired = now.getTime() > expiresDate.getTime() + gracePeriodMs;
+
+    if (!isExpired) {
+      return {
+        status: 'active' as const,
+        isBypass: false,
+        daysRemaining,
+        expiresAt: expiresDate,
+        workspace,
+      };
+    }
   }
 
   if (workspace.organization.plan === 'free') {
@@ -193,42 +261,20 @@ export async function checkSubscriptionStatus() {
       isBypass: false,
       daysRemaining: 0,
       expiresAt: null,
+      workspace,
     };
   }
 
   const expiresAt = workspace.organization.subscriptionExpiresAt;
-  if (!expiresAt) {
-    // If they have a plan but no expiresAt, assume lifetime/active
-    return {
-      status: 'active' as const,
-      isBypass: false,
-      daysRemaining: 999,
-      expiresAt: null,
-    };
-  }
-
-  const now = new Date();
-  const expiresDate = new Date(expiresAt);
-  const diffMs = expiresDate.getTime() - now.getTime();
+  const expiresDate = expiresAt ? new Date(expiresAt) : new Date();
+  const diffMs = expiresDate.getTime() - Date.now();
   const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  const gracePeriodMs = 5 * 24 * 60 * 60 * 1000;
-  const isExpired = now.getTime() > expiresDate.getTime() + gracePeriodMs;
-
-  if (isExpired) {
-    return {
-      status: 'expired' as const,
-      isBypass: false,
-      daysRemaining,
-      expiresAt: expiresDate,
-    };
-  }
-
   return {
-    status: 'active' as const,
+    status: 'expired' as const,
     isBypass: false,
     daysRemaining,
     expiresAt: expiresDate,
+    workspace,
   };
 }
 
@@ -237,5 +283,5 @@ export async function ensurePaidWorkspace() {
   if (subStatus.status === 'unpaid' || subStatus.status === 'expired') {
     throw new Error('Upgrade required');
   }
-  return getCurrentWorkspace();
+  return subStatus.workspace;
 }

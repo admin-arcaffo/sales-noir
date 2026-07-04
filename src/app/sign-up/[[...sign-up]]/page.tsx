@@ -7,7 +7,7 @@ export default function SignUpPage() {
       
       <div className="relative z-10 flex flex-col items-center gap-8">
         <div className="text-center space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Sales Noir</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Sales Arcaffo</h1>
           <p className="text-sm text-zinc-500">Crie sua conta</p>
         </div>
         <SignUp

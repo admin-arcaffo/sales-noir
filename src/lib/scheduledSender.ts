@@ -19,14 +19,22 @@ export async function sendScheduledWhatsAppMessage(conversationId: string, conte
     throw new Error("Conversation not found");
   }
 
-  // 2. Encontrar a conexão ativa da organização
-  const connection = await prisma.whatsAppConnection.findFirst({
-    where: {
-      organizationId: conversation.contact.organizationId,
-      status: "CONNECTED",
-      isActive: true,
-    },
-  });
+  // 2. Encontrar a conexão vinculada ou ativa da organização
+  let connection = null;
+  if (conversation.whatsAppConnectionId) {
+    connection = await prisma.whatsAppConnection.findUnique({
+      where: { id: conversation.whatsAppConnectionId }
+    });
+  }
+  if (!connection) {
+    connection = await prisma.whatsAppConnection.findFirst({
+      where: {
+        organizationId: conversation.contact.organizationId,
+        status: "CONNECTED",
+        isActive: true,
+      },
+    });
+  }
 
   if (!connection) {
     throw new Error("WhatsApp connection not configured or not active");

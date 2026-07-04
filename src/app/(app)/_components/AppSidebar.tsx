@@ -6,18 +6,22 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import {
   MessageSquare, Users, CheckCircle2, BarChart3,
-  Settings, BrainCircuit, Sun, Moon
+  Settings, BrainCircuit, Sun, Moon, User, Contact
 } from "lucide-react";
 import { useFloatingChat } from "@/context/FloatingChatContext";
+import { getNavItems, type NavItemDefinition } from "@/lib/nav-order";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", icon: BarChart3, label: "Dashboard" },
-  { href: "/conversations", icon: MessageSquare, label: "Conversas", badge: true },
-  { href: "/leads", icon: Users, label: "Leads" },
-  { href: "/tasks", icon: CheckCircle2, label: "Tarefas" },
-];
+const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  "/dashboard": BarChart3,
+  "/conversations": MessageSquare,
+  "/contacts": Contact,
+  "/leads": Users,
+  "/reports": BarChart3,
+  "/tasks": CheckCircle2,
+};
 
 const NAV_BOTTOM = [
+  { href: "/account", icon: User, label: "Minha Conta" },
   { href: "/settings", icon: Settings, label: "Configurações" },
 ];
 
@@ -25,11 +29,13 @@ export function AppSidebar() {
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [navItems, setNavItems] = useState<NavItemDefinition[]>([]);
 
   const { conversations, lastReadMap } = useFloatingChat();
 
   useEffect(() => {
     setMounted(true);
+    setNavItems(getNavItems());
     if (typeof window !== "undefined") {
       const isLight = document.documentElement.classList.contains("light");
       setTheme(isLight ? "light" : "dark");
@@ -65,7 +71,7 @@ export function AppSidebar() {
   }, 0);
 
   return (
-    <aside className="w-14 lg:w-[60px] border-r border-zinc-900 bg-[#070709] flex flex-col items-center py-4 gap-4 shrink-0 z-30 transition-colors">
+    <aside className="w-14 lg:w-[60px] border-r border-zinc-900 bg-[#070709] hidden md:flex flex-col items-center py-4 gap-4 shrink-0 z-30 transition-colors">
       <Link href="/dashboard" className="w-8 h-8 rounded bg-zinc-950 flex items-center justify-center border border-zinc-850 hover:bg-zinc-900 transition-colors relative group">
         <BrainCircuit className="text-zinc-400 w-4 h-4" />
         <div className="absolute left-full ml-3 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
@@ -74,8 +80,9 @@ export function AppSidebar() {
       </Link>
 
       <nav className="flex flex-col gap-1 w-full px-2">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isActive = pathname.startsWith(item.href);
+          const Icon = ICON_MAP[item.href];
           return (
             <Link
               key={item.href}
@@ -87,7 +94,7 @@ export function AppSidebar() {
                   : "text-zinc-500 hover:bg-zinc-900/40 hover:text-zinc-300 border border-transparent"
                 }`}
             >
-              <item.icon size={16} />
+              {Icon && <Icon size={16} />}
               {item.badge && unreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full text-[8px] font-bold text-white flex items-center justify-center animate-pulse border-2 border-[#070709]">
                   {unreadCount > 99 ? '99+' : unreadCount}
@@ -141,7 +148,11 @@ export function AppSidebar() {
         })}
         {mounted && (
           <div className="border border-zinc-800 p-0.5 rounded bg-zinc-950 flex items-center justify-center mt-2 w-full max-w-[32px]">
-            <UserButton appearance={{ elements: { userButtonAvatarBox: "w-full h-full rounded-sm" } }} />
+            <UserButton 
+              userProfileMode="navigation"
+              userProfileUrl="/settings/profile"
+              appearance={{ elements: { userButtonAvatarBox: "w-full h-full rounded-sm" } }} 
+            />
           </div>
         )}
       </div>

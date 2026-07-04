@@ -3,7 +3,7 @@ import { checkSubscriptionStatus } from "@/lib/workspace";
 import { AppSidebar } from "./_components/AppSidebar";
 import { FloatingChatProvider } from "@/context/FloatingChatContext";
 import { FloatingChatPopup } from "./_components/FloatingChatPopup";
-
+import { BottomNav } from "./_components/BottomNav";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const subStatus = await checkSubscriptionStatus();
 
@@ -16,7 +16,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans relative">
         <AppSidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
-          {subStatus.status === "active" && !subStatus.isBypass && subStatus.daysRemaining <= 5 && (
+          {subStatus.status === "active" && !subStatus.isBypass && subStatus.daysRemaining <= 5 && subStatus.workspace?.role === "owner" && (
             <div className="bg-amber-600 text-white text-center py-2 px-4 text-sm font-medium animate-pulse flex items-center justify-center gap-2 z-50">
               <span>⚠️</span>
               <span>
@@ -31,10 +31,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </a>
             </div>
           )}
-          <main className="flex-1 overflow-hidden relative">
+          <main className="flex-1 overflow-hidden relative pb-[60px] md:pb-0">
             {children}
             <FloatingChatPopup />
           </main>
+          <BottomNav />
         </div>
       </div>
     </FloatingChatProvider>

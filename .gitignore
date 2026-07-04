@@ -18,6 +18,7 @@
 # misc
 .DS_Store
 *.pem
+/.media/
 
 # debug
 npm-debug.log*
@@ -36,3 +37,9 @@ yarn-error.log*
 
 # clerk configuration (can include secrets)
 /.clerk/
+.env*.local
+
+# build artifacts
+tsconfig.tsbuildinfo
+tsc-errors.log
+*.log
