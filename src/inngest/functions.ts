@@ -485,10 +485,12 @@ export const analyzeConversation = inngest.createFunction(
         data: { temperature: newTemp, stage: newStage },
       });
 
-      await prisma.contact.update({
-        where: { id: conversation.contactId },
-        data: { isLead: !isLostStage },
-      });
+      if (conversation.contact.isLead) {
+        await prisma.contact.update({
+          where: { id: conversation.contactId },
+          data: { isLead: !isLostStage },
+        });
+      }
     });
 
     return { success: true, conversationId };

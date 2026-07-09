@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSignedMediaUploadUrl } from "@/lib/media-storage";
+import { normalizeOutboundMediaInput } from "@/lib/outbound-media";
 import { ensurePaidWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -12,11 +13,6 @@ const MAX_MEDIA_BYTES_BY_TYPE: Record<string, number> = {
   document: Number(process.env.MAX_WHATSAPP_DOCUMENT_BYTES || 32 * 1024 * 1024),
 };
 
-function cleanMimeType(value: unknown) {
-  const clean = String(value || "application/octet-stream").split(";")[0].trim().toLowerCase();
-  return clean || "application/octet-stream";
-}
-
 function getMaxMediaBytes(mediaType: string) {
   return Math.min(MAX_MEDIA_BYTES_BY_TYPE[mediaType] || MAX_MEDIA_BYTES, MAX_MEDIA_BYTES);
 }
@@ -26,8 +22,13 @@ export async function POST(req: Request) {
     const workspace = await ensurePaidWorkspace();
     const body = await req.json().catch(() => ({}));
     const fileName = String(body.fileName || "media");
-    const mimetype = cleanMimeType(body.mimetype);
-    const mediatype = String(body.mediatype || "document").toLowerCase();
+    const normalized = normalizeOutboundMediaInput({
+      fileName,
+      mimetype: body.mimetype,
+      mediatype: body.mediatype,
+    });
+    const mimetype = normalized.mimetype;
+    const mediatype = normalized.mediatype;
     const fileSize = Number(body.fileSize || 0);
     const maxBytes = getMaxMediaBytes(mediatype);
 
@@ -51,7 +52,13 @@ export async function POST(req: Request) {
       fileName,
     });
 
-    return NextResponse.json({ success: true, ...signed });
+    return NextResponse.json({
+      success: true,
+      ...signed,
+      mediatype,
+      mimetype,
+      uploadMimeType: signed.uploadMimeType || normalized.storageMimeType,
+    });
   } catch (error: any) {
     console.error("[MEDIA UPLOAD URL]", error);
     return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });

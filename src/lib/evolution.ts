@@ -213,7 +213,7 @@ export const evolution = {
   /**
    * Envia uma mensagem de texto
    */
-  sendText: async (instanceName: string, instanceToken: string, to: string, text: string) => {
+  sendText: async (instanceName: string, instanceToken: string, to: string, text: string, quotedMessageId?: string) => {
     if (!API_URL) throw new Error("Evolution API not configured (EVOLUTION_API_URL missing)");
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -230,7 +230,8 @@ export const evolution = {
           options: {
             delay: 1200,
             presence: "composing",
-            linkPreview: false
+            linkPreview: false,
+            ...(quotedMessageId ? { quoted: { key: { id: quotedMessageId } } } : {})
           }
         }),
         signal: controller.signal,
@@ -250,7 +251,7 @@ export const evolution = {
   /**
    * Envia arquivo multimídia (Imagem, Áudio, Documento, Vídeo)
    */
-  sendMedia: async (instanceName: string, instanceToken: string, to: string, base64: string, mediatype: string, mimetype: string, caption?: string, fileName?: string) => {
+  sendMedia: async (instanceName: string, instanceToken: string, to: string, base64: string, mediatype: string, mimetype: string, caption?: string, fileName?: string, quotedMessageId?: string) => {
     if (!API_URL) throw new Error("Evolution API not configured (EVOLUTION_API_URL missing)");
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -265,12 +266,13 @@ export const evolution = {
           number: to,
           mediatype,
           mimetype,
-          caption: caption || "",
           media: base64,
           fileName: fileName || "file",
+          caption: caption || undefined,
           options: {
             delay: 1200,
-            presence: "composing"
+            presence: "composing",
+            ...(quotedMessageId ? { quoted: { key: { id: quotedMessageId } } } : {})
           }
         }),
         signal: controller.signal,

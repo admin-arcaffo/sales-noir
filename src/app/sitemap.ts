@@ -1,7 +1,7 @@
 import { MetadataRoute } from 'next';
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://sales.arcaffo.com';
+  const baseUrl = 'https://dealeto.arcaffo.com';
 
   return [
     {

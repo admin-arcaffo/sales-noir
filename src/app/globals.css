@@ -86,6 +86,14 @@
     @apply bg-background text-foreground antialiased selection:bg-white selection:text-black;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+  
+  /* Fix iOS Safari zoom on input focus */
+  @media screen and (max-width: 768px) {
+    input, select, textarea {
+      font-size: 16px !important;
+    }
+  }
+
   h1, h2, h3, h4, h5, h6 {
     @apply font-display tracking-tight font-semibold;
   }
@@ -243,6 +251,28 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     background-color: var(--card) !important;
   }
 
+  & .bg-\[\#0c0c0e\] {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-\[\#070709\] {
+    background-color: var(--card) !important;
+  }
+
+  & .bg-\[\#070709\]\/90 {
+    background-color: rgba(255,255,255,0.95) !important;
+  }
+
+  & .surface-noir {
+    background-color: var(--card) !important;
+    border-color: var(--border) !important;
+  }
+
+  & .surface-noir-muted {
+    background-color: var(--card) !important;
+    border-color: var(--border) !important;
+  }
+
   & .card-dark {
     background-color: var(--card) !important;
   }
@@ -300,6 +330,10 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     border-color: var(--border) !important;
   }
 
+  & .bg-white\/\[0\.02\] { background-color: var(--muted) !important; }
+  & .bg-white\/\[0\.03\] { background-color: var(--muted) !important; }
+  & .bg-black\/80 { background-color: rgba(0,0,0,0.4) !important; }
+
   & .bg-zinc-950\/80 {
     background-color: var(--muted) !important;
     border-bottom-color: var(--border) !important;
@@ -317,6 +351,25 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   & .bg-white\/10 {
     background-color: var(--secondary) !important;
   }
+}
+
+/* Button & Shadow Overrides */
+.light {
+  & .btn-noir { 
+    background-color: var(--foreground) !important; 
+    color: var(--card) !important; 
+  }
+  & .btn-noir:hover { background-color: #27272a !important; }
+  
+  & .btn-noir-secondary {
+    background-color: var(--card) !important;
+    border-color: var(--border) !important;
+    color: var(--muted-foreground) !important;
+  }
+
+  & .bg-gradient-to-b { background: var(--card) !important; }
+  & .shadow-2xl { box-shadow: 0 10px 40px -10px rgba(0,0,0,0.1) !important; }
+  & .shadow-xl { box-shadow: 0 8px 30px -10px rgba(0,0,0,0.08) !important; }
 }
 
 /* Hover Overrides */
@@ -481,3 +534,40 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   background-color: var(--border) !important;
 }
 
+/* ==========================================
+   MOBILE UX OPTIMIZATIONS
+   ========================================== */
+@media (max-width: 767px) {
+  /* Prevent zoom on input focus by forcing 16px font-size */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* Make modals truly fullscreen on mobile */
+  .modal-overlay > div {
+    max-width: 100% !important;
+    max-height: 100dvh !important;
+    height: 100dvh;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+  }
+  
+  .modal-overlay {
+    padding: 0 !important;
+  }
+
+  /* Hide BottomNav when a modal is open */
+  body:has(.modal-overlay) nav[data-bottom-nav] {
+    display: none !important;
+  }
+}
+
+/* Global mobile tweaks */
+html, body {
+  -webkit-overflow-scrolling: touch;
+}
+
+button, a {
+  touch-action: manipulation;
+}

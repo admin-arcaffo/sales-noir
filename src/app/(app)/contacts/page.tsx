@@ -365,6 +365,7 @@ export default function ContactsPage() {
         />
 
         <ContactFormModal
+          key={editingContact?.id ?? 'new'}
           isOpen={isFormModalOpen}
           onClose={() => { setIsFormModalOpen(false); setEditingContact(null); }}
           onSuccess={handleFormSuccess}

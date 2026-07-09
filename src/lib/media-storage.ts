@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import prisma from "@/lib/prisma";
+import { getStorageUploadMimeType } from "@/lib/outbound-media";
 
 const LOCAL_MEDIA_DIR = path.join(process.cwd(), ".media");
 
@@ -74,6 +75,12 @@ function getExtension(mimeType: string) {
   if (normalized.includes("webm")) return "webm";
   if (normalized.includes("mp4")) return "mp4";
   if (normalized.includes("pdf")) return "pdf";
+  if (normalized.includes("wordprocessingml") || normalized.includes("msword")) return "docx";
+  if (normalized.includes("spreadsheetml") || normalized.includes("ms-excel")) return "xlsx";
+  if (normalized.includes("presentationml") || normalized.includes("ms-powerpoint")) return "pptx";
+  if (normalized.includes("zip")) return "zip";
+  if (normalized.includes("csv")) return "csv";
+  if (normalized.includes("plain")) return "txt";
   return "bin";
 }
 
@@ -129,6 +136,7 @@ export async function createSignedMediaUploadUrl(input: {
   }
 
   const storageKey = buildDirectUploadStorageKey(input.organizationId, input.mimeType, input.fileName);
+  const uploadMimeType = getStorageUploadMimeType(input.mimeType);
   const response = await fetch(`${config.url}/storage/v1/object/upload/sign/${config.bucket}/${storageKey}`, {
     method: "POST",
     headers: {
@@ -157,6 +165,7 @@ export async function createSignedMediaUploadUrl(input: {
   return {
     uploadUrl: signedUrl,
     storageKey,
+    uploadMimeType,
     bucket: config.bucket,
   };
 }
@@ -165,62 +174,44 @@ function buildStorageKey(organizationId: string, messageId: string, mimeType: st
   return `organizations/${organizationId}/messages/${messageId}/${randomUUID()}.${getExtension(mimeType)}`;
 }
 
-const SAFE_MIME_TYPES = [
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "audio/ogg",
-  "audio/mpeg",
-  "audio/mp3",
-  "audio/wav",
-  "audio/webm",
-  "video/mp4",
-  "video/webm",
-  "video/ogg",
-  "application/pdf",
-  "application/zip",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-  "text/csv",
-];
-
-function getUploadMimeType(mimeType: string): string {
-  const clean = mimeType.split(";")[0].trim().toLowerCase();
-  if (SAFE_MIME_TYPES.includes(clean)) {
-    return clean;
-  }
-  return "application/octet-stream";
-}
-
 async function putSupabaseObject(storageKey: string, buffer: Buffer, mimeType: string) {
   const config = getSupabaseConfig();
   if (!config) return false;
 
-  const uploadMimeType = getUploadMimeType(mimeType);
+  const uploadMimeType = getStorageUploadMimeType(mimeType);
 
-  const response = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${storageKey}`, {
-    method: "PUT",
-    headers: {
-      apikey: config.key,
-      Authorization: `Bearer ${config.key}`,
-      "Content-Type": uploadMimeType,
-      "Content-Length": String(buffer.byteLength),
-      "x-upsert": "true",
-    },
-    body: new Uint8Array(buffer),
-  });
+  const upload = async (contentType: string) => {
+    const response = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${storageKey}`, {
+      method: "PUT",
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        "Content-Type": contentType,
+        "Content-Length": String(buffer.byteLength),
+        "x-upsert": "true",
+      },
+      body: new Uint8Array(buffer),
+    });
 
-  if (!response.ok) {
+    if (response.ok) return null;
+
     const detail = await response.text().catch(() => "");
-    throw new Error(`Supabase Storage upload failed (${response.status}): ${detail}`);
+    return { status: response.status, detail, contentType };
+  };
+
+  const firstError = await upload(uploadMimeType);
+  if (!firstError) return true;
+
+  const shouldRetryAsBinary = uploadMimeType !== "application/octet-stream"
+    && (firstError.status === 400 || firstError.status === 415 || firstError.detail.includes("invalid_mime_type"));
+
+  if (shouldRetryAsBinary) {
+    const fallbackError = await upload("application/octet-stream");
+    if (!fallbackError) return true;
+    throw new Error(`Supabase Storage upload failed (${fallbackError.status}) with fallback application/octet-stream: ${fallbackError.detail}`);
   }
 
-  return true;
+  throw new Error(`Supabase Storage upload failed (${firstError.status}) with ${firstError.contentType}: ${firstError.detail}`);
 }
 
 async function getSupabaseObject(storageKey: string) {

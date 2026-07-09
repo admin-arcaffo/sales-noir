@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { GlowCard } from "@/components/ui/GlowCard";
@@ -54,6 +54,12 @@ interface LeadSim {
 export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
   const [selectedLeadId, setSelectedLeadId] = useState("lead-1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("app:entered");
+    }
+  }, []);
 
   // Pipeline Simulator State
   const [stages, setStages] = useState([
@@ -191,11 +197,11 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "Sales Arcaffo",
+            "name": "Dealeto",
             "operatingSystem": "Web",
             "applicationCategory": "BusinessApplication",
             "description": "O assistente definitivo de vendas e negociações para WhatsApp Business. Maximize suas conversões com nossa inteligência artificial.",
-            "url": "https://sales.arcaffo.com",
+            "url": "https://dealeto.arcaffo.com",
             "offers": {
               "@type": "Offer",
               "price": "0",
@@ -204,7 +210,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
             "publisher": {
               "@type": "Organization",
               "name": "Arcaffo",
-              "url": "https://sales.arcaffo.com"
+              "url": "https://dealeto.arcaffo.com"
             }
           })
         }}
@@ -226,7 +232,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
           </div>
           <div>
             <span className="font-extrabold text-xs tracking-widest text-white block uppercase">
-              SALES ARCAFFO
+              DEALETO
             </span>
             <span className="text-[8px] font-mono text-zinc-500 block tracking-widest uppercase">Cognitive CRM Systems</span>
           </div>
@@ -283,7 +289,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
             </h1>
 
             <p className="text-zinc-500 text-xs sm:text-sm max-w-xl leading-relaxed font-normal">
-              O Sales Arcaffo acompanha suas conversas comerciais do WhatsApp em tempo real. Ele detecta objeções de clientes, sugere respostas de alto impacto na hora e preenche seu CRM de forma automatizada. Menos trabalho manual, mais fechamentos.
+              O Dealeto acompanha suas conversas comerciais do WhatsApp em tempo real. Ele detecta objeções de clientes, sugere respostas de alto impacto na hora e preenche seu CRM de forma automatizada. Menos trabalho manual, mais fechamentos.
             </p>
 
             <div className="flex flex-wrap gap-4 pt-2">
@@ -307,7 +313,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
             <div className="border border-zinc-850/80 bg-[#070709]/80 backdrop-blur-md rounded p-4 font-mono text-[9px] text-zinc-500 space-y-4 shadow-2xl relative overflow-hidden">
               <div className="absolute top-0 right-0 w-[150px] h-[150px] rounded-full bg-zinc-500/5 blur-[40px] pointer-events-none" />
               <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
-                <span>SALES_CO_PILOT: ATIVO</span>
+                <span>DEALETO_COPILOT: ATIVO</span>
                 <span className="text-emerald-500 flex items-center gap-1.5 font-bold">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                   ONLINE
@@ -722,7 +728,7 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
               </div>
               <h3 className="text-white font-bold text-xs uppercase tracking-wider">Qualificação e Funil Automatizados</h3>
               <p className="text-[11px] text-zinc-500 leading-relaxed font-normal">
-                Esqueça o preenchimento manual de CRM. O Sales Arcaffo analisa as interações no WhatsApp e atualiza a temperatura do lead (Frio/Morno/Quente) e as etapas do Kanban comercial de forma totalmente autônoma.
+                Esqueça o preenchimento manual de CRM. O Dealeto analisa as interações no WhatsApp e atualiza a temperatura do lead (Frio/Morno/Quente) e as etapas do Kanban comercial de forma totalmente autônoma.
               </p>
             </div>
           </GlowCard>
@@ -895,9 +901,9 @@ export default function LandingClient({ isSignedIn }: { isSignedIn: boolean }) {
         <div className="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 text-zinc-500 font-bold font-mono tracking-widest">
             <BrainCircuit className="w-4 h-4 text-zinc-500" />
-            <span>SALES ARCAFFO</span>
+            <span>DEALETO</span>
           </div>
-          <p>© 2026 Sales Arcaffo. Todos os direitos reservados. Sistemas de inteligência comercial.</p>
+          <p>© 2026 Dealeto. Todos os direitos reservados. Sistemas de inteligência comercial.</p>
           <div className="flex gap-4 font-mono text-[8px] text-zinc-700">
             <span>SYS_VERSION: 2.2.0</span>
           </div>

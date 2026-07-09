@@ -8,7 +8,7 @@ export default function SignInPage() {
       
       <div className="relative z-10 flex flex-col items-center gap-8">
         <div className="text-center space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Sales Arcaffo</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">Dealeto</h1>
           <p className="text-sm text-zinc-500">Inteligência Comercial para WhatsApp</p>
         </div>
         <SignIn

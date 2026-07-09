@@ -67,7 +67,7 @@ export default function InvitePage() {
         <div>
           <h1 className="text-2xl font-bold text-white mb-2">Convite de Equipe</h1>
           <p className="text-sm text-zinc-400">
-            Você foi convidado para participar de uma organização no Sales Arcaffo.
+            Você foi convidado para participar de uma organização no Dealeto.
           </p>
         </div>
 

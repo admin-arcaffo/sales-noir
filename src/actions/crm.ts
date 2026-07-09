@@ -10,12 +10,19 @@ import { getBrazilianPhoneVariations, getOutboundWhatsAppNumber, getOutboundWhat
 import { resolveOpenConversation } from '@/lib/conversation-resolver';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@clerk/nextjs/server';
+import { randomUUID } from 'crypto';
 import {
   getMediaProxyUrl,
   normalizeBase64Media,
   readStoredMediaBase64,
   saveMessageMediaFromBase64,
 } from '@/lib/media-storage';
+import {
+  cleanOutboundMimeType as cleanMediaMimeType,
+  normalizeOutboundMediaInput,
+  normalizeOutboundMediaType as normalizeMediaType,
+} from '@/lib/outbound-media';
+import { isGenericNumericContactName, parseWhatsAppJid } from '@/lib/whatsapp-jid';
 
 export type DashboardData = {
   kpis: {
@@ -172,6 +179,8 @@ export type LeadData = {
   totalProductValueFormatted: string | null;
   assignedUserId: string | null;
   assignedUserName: string | null;
+  closerId: string | null;
+  closerName: string | null;
   lastContactAt: string | null;
   openTasksCount: number;
   overdueTasksCount: number;
@@ -181,10 +190,12 @@ export type LeadData = {
     due: string;
     dueAt: string | null;
     priority: string;
+    type?: string;
   } | null;
   latestRiskLevel: string | null;
   latestUrgency: string | null;
   latestNextStep: string | null;
+  isArchived?: boolean;
   closedDeal: ClosedDealSummaryData | null;
   contactProducts?: ContactProductData[];
 };
@@ -280,6 +291,8 @@ export type ConversationData = {
   avatarUrl: string | null;
   assignedUserId: string | null;
   assignedUserName: string | null;
+  closerId: string | null;
+  closerName: string | null;
   messages: ConversationMessage[];
   latestAnalysis: ConversationAnalysisData | null;
   contactProducts?: ContactProductData[];
@@ -556,6 +569,77 @@ function isMediaMessageType(type: string) {
   return ['IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER'].includes(type);
 }
 
+function getEvolutionMessageDate(value: unknown) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return new Date();
+  const millis = timestamp > 9_999_999_999 ? timestamp : timestamp * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function getEvolutionMessageType(messageType: string, message: any) {
+  const resolvedType = messageType || Object.keys(message || {})[0] || '';
+  if (resolvedType === 'audioMessage') return 'AUDIO';
+  if (resolvedType === 'imageMessage') return 'IMAGE';
+  if (resolvedType === 'videoMessage') return 'VIDEO';
+  if (resolvedType === 'documentMessage') return 'DOCUMENT';
+  if (resolvedType === 'stickerMessage') return 'STICKER';
+  if (resolvedType === 'contactMessage' || resolvedType === 'contactsArrayMessage') return 'CONTACT';
+  return 'TEXT';
+}
+
+function getEvolutionMessageContent(message: any, type: string) {
+  const content =
+    message?.conversation ||
+    message?.extendedTextMessage?.text ||
+    message?.imageMessage?.caption ||
+    message?.videoMessage?.caption ||
+    message?.documentMessage?.fileName ||
+    '';
+
+  if (content) return content;
+  if (type === 'AUDIO') return 'Mensagem de áudio';
+  if (type === 'IMAGE') return 'Imagem importada';
+  if (type === 'VIDEO') return 'Vídeo importado';
+  if (type === 'DOCUMENT') return 'Documento importado';
+  if (type === 'STICKER') return 'Figurinha importada';
+  if (type === 'CONTACT') return 'Contato importado';
+  return 'Mensagem importada';
+}
+
+function normalizeEvolutionMessageForImport(msg: any, expectedRemoteJid?: string) {
+  const waMessageId = msg?.key?.id;
+  if (!waMessageId) return null;
+
+  const remoteJid = msg?.key?.remoteJid || expectedRemoteJid;
+  const parsedJid = parseWhatsAppJid(remoteJid);
+  if (!parsedJid.isPersonal) return null;
+
+  const message = msg?.message || {};
+  if (message.protocolMessage || message.senderKeyDistributionMessage || message.reactionMessage) {
+    return null;
+  }
+
+  const type = getEvolutionMessageType(msg?.messageType, message);
+  const timestamp = getEvolutionMessageDate(msg?.messageTimestamp);
+
+  return {
+    waMessageId: String(waMessageId),
+    direction: msg?.key?.fromMe ? 'OUTBOUND' : 'INBOUND',
+    type,
+    content: getEvolutionMessageContent(message, type),
+    timestamp,
+    status: msg?.key?.fromMe ? 'READ' : 'RECEIVED',
+    waMessageKey: msg?.key || null,
+    waMessagePayload: {
+      key: msg?.key || null,
+      message,
+      messageType: msg?.messageType || null,
+    },
+    mediaStatus: isMediaMessageType(type) ? 'PENDING' : 'NONE',
+  };
+}
+
 function mapSuggestedRepliesToObject(
   replies: Array<{ type: string; content: string }>
 ): AnalysisResponse['suggestedReplies'] {
@@ -564,6 +648,32 @@ function mapSuggestedRepliesToObject(
     consultative: replies.find((reply) => reply.type === 'CONSULTATIVE')?.content || '',
     whatsappShort: replies.find((reply) => reply.type === 'WHATSAPP_SHORT')?.content || '',
   };
+}
+
+function isSuspiciousEmptyConversationRecord(conversation: any) {
+  const contact = conversation?.contact;
+  if (!contact) return false;
+
+  const messageCount = conversation?._count?.messages ?? conversation?.messages?.length ?? 0;
+  if (messageCount > 0) return false;
+
+  if (
+    contact.isLead ||
+    contact.assignedUserId ||
+    contact.email ||
+    contact.company ||
+    contact.interestArea ||
+    contact.origin ||
+    contact.notes ||
+    contact.productId ||
+    contact.address
+  ) {
+    return false;
+  }
+
+  if (Array.isArray(contact.contactProducts) && contact.contactProducts.length > 0) return false;
+
+  return isGenericNumericContactName(contact.name, contact.phone);
 }
 
 export async function getReportsData(filters?: ReportsFilters): Promise<ReportsData> {
@@ -1113,15 +1223,62 @@ async function rescueOrphanedConversations(orgId: string) {
     if (ownerConnectionId) {
       const convosWithoutConnection = await prisma.conversation.findMany({
         where: { contact: { organizationId: orgId }, whatsAppConnectionId: null },
-        take: 500 // Process in chunks if there are many
+        select: { id: true, contactId: true, status: true, lastMessageAt: true, _count: { select: { messages: true } } },
+        take: 500
       });
 
-      if (convosWithoutConnection.length > 0) {
-        console.log(`[RESCUE] Migrating ${convosWithoutConnection.length} conversations to connection ${ownerConnectionId}`);
-        await prisma.conversation.updateMany({
-          where: { id: { in: convosWithoutConnection.map(c => c.id) } },
-          data: { whatsAppConnectionId: ownerConnectionId }
-        });
+      const migratableIds = convosWithoutConnection
+        .filter((c) => c._count.messages > 0)
+        .map((c) => c.id);
+
+      if (migratableIds.length > 0) {
+        console.log(`[RESCUE] Merging ${migratableIds.length} orphaned conversations into connection ${ownerConnectionId}`);
+
+        for (let i = 0; i < migratableIds.length; i += 50) {
+          const batch = migratableIds.slice(i, i + 50);
+
+          await prisma.$transaction(async (tx) => {
+            const orphans = await tx.conversation.findMany({
+              where: { id: { in: batch } },
+              select: { id: true, contactId: true, lastMessageAt: true },
+            });
+
+            for (const orphan of orphans) {
+              const existing = await tx.conversation.findFirst({
+                where: {
+                  contactId: orphan.contactId,
+                  whatsAppConnectionId: ownerConnectionId,
+                  status: "OPEN",
+                },
+                select: { id: true, lastMessageAt: true },
+              });
+
+              if (existing) {
+                await tx.message.updateMany({
+                  where: { conversationId: orphan.id },
+                  data: { conversationId: existing.id },
+                });
+
+                if (orphan.lastMessageAt && (!existing.lastMessageAt || orphan.lastMessageAt > existing.lastMessageAt)) {
+                  await tx.conversation.update({
+                    where: { id: existing.id },
+                    data: { lastMessageAt: orphan.lastMessageAt },
+                  });
+                }
+
+                await tx.conversation.update({
+                  where: { id: orphan.id },
+                  data: { status: "CLOSED" },
+                });
+              } else {
+                await tx.conversation.update({
+                  where: { id: orphan.id },
+                  data: { whatsAppConnectionId: ownerConnectionId },
+                });
+              }
+            }
+          });
+        }
       }
     }
 
@@ -1189,8 +1346,10 @@ export async function getLeads(options?: { limit?: number; cursor?: string; runM
       mainChallenges: true,
       productId: true,
       assignedUserId: true,
+      closerId: true,
       product: { select: { name: true, price: true } },
       assignedUser: { select: { name: true } },
+      closer: { select: { name: true } },
       contactProducts: {
         select: {
           id: true,
@@ -1241,6 +1400,7 @@ export async function getLeads(options?: { limit?: number; cursor?: string; runM
           title: true,
           dueAt: true,
           priority: true,
+          type: true,
         },
       },
     },
@@ -1310,6 +1470,8 @@ export async function getLeads(options?: { limit?: number; cursor?: string; runM
         : (lead.product?.price ? formatCurrency(lead.product.price) : null),
       assignedUserId: lead.assignedUserId,
       assignedUserName: lead.assignedUser?.name || null,
+      closerId: lead.closerId || null,
+      closerName: lead.closer?.name || null,
       lastContactAt: lastContactAt?.toISOString() || null,
       openTasksCount: openTaskCountByContactId.get(lead.id) || 0,
       overdueTasksCount: overdueTaskCountByContactId.get(lead.id) || 0,
@@ -1319,6 +1481,7 @@ export async function getLeads(options?: { limit?: number; cursor?: string; runM
         due: nextTask.dueAt ? formatDateTime(nextTask.dueAt) : 'Sem data',
         dueAt: nextTask.dueAt?.toISOString() || null,
         priority: nextTask.priority,
+        type: nextTask.type,
       } : null,
       latestRiskLevel: latestAnalysis?.riskLevel || null,
       latestUrgency: latestAnalysis?.urgency || null,
@@ -1381,7 +1544,7 @@ export async function getPipelineDashboardData(): Promise<{
 
   const [leadsDb, stagesDb, productsDb, originsDb, usersDb, session] = await Promise.all([
     prisma.contact.findMany({
-      where: { organizationId: orgId, isLead: true },
+      where: { organizationId: orgId, isLead: true, isArchived: false },
       select: {
         id: true,
         name: true,
@@ -1396,8 +1559,10 @@ export async function getPipelineDashboardData(): Promise<{
         mainChallenges: true,
         productId: true,
         assignedUserId: true,
+        closerId: true,
         product: { select: { name: true, price: true } },
         assignedUser: { select: { name: true } },
+        closer: { select: { name: true } },
       contactProducts: {
         select: {
           id: true,
@@ -1448,6 +1613,7 @@ export async function getPipelineDashboardData(): Promise<{
             title: true,
             dueAt: true,
             priority: true,
+            type: true,
           },
         },
       },
@@ -1542,6 +1708,8 @@ export async function getPipelineDashboardData(): Promise<{
         : (lead.product?.price ? formatCurrency(lead.product.price) : null),
       assignedUserId: lead.assignedUserId,
       assignedUserName: lead.assignedUser?.name || null,
+      closerId: lead.closerId || null,
+      closerName: lead.closer?.name || null,
       lastContactAt: lastContactAt?.toISOString() || null,
       openTasksCount: openTaskCountByContactId.get(lead.id) || 0,
       overdueTasksCount: overdueTaskCountByContactId.get(lead.id) || 0,
@@ -1551,6 +1719,7 @@ export async function getPipelineDashboardData(): Promise<{
         due: nextTask.dueAt ? formatDateTime(nextTask.dueAt) : 'Sem data',
         dueAt: nextTask.dueAt?.toISOString() || null,
         priority: nextTask.priority,
+        type: nextTask.type,
       } : null,
       latestRiskLevel: latestAnalysis?.riskLevel || null,
       latestUrgency: latestAnalysis?.urgency || null,
@@ -1607,6 +1776,7 @@ export async function updateConversationStage(conversationId: string, stage: str
       id: conversationId,
       contact: { organizationId: workspace.organizationId },
     },
+    include: { contact: true }
   });
 
   if (!conversation) {
@@ -1634,11 +1804,13 @@ export async function updateConversationStage(conversationId: string, stage: str
     });
   }
 
-  // Atualiza a flag isLead do contato
-  await prisma.contact.update({
-    where: { id: conversation.contactId },
-    data: { isLead: !isLostStage },
-  });
+  // Atualiza a flag isLead do contato apenas se ele já for um Lead
+  if (conversation.contact.isLead) {
+    await prisma.contact.update({
+      where: { id: conversation.contactId },
+      data: { isLead: !isLostStage },
+    });
+  }
 
   return updated;
 }
@@ -1734,7 +1906,7 @@ function mapTaskData(task: any): TaskData {
   };
 }
 
-export async function getTasks(filters?: { contactId?: string; status?: string; limit?: number }): Promise<TaskData[]> {
+export async function getTasks(filters?: { contactId?: string; status?: string; userId?: string; limit?: number }): Promise<TaskData[]> {
   const workspace = await ensurePaidWorkspace();
   const orgId = workspace.organizationId;
 
@@ -1746,6 +1918,10 @@ export async function getTasks(filters?: { contactId?: string; status?: string; 
 
   if (filters?.status) {
     where.status = filters.status;
+  }
+
+  if (filters?.userId) {
+    where.userId = filters.userId;
   }
 
   const tasks = await prisma.task.findMany({
@@ -1933,6 +2109,7 @@ export async function updateTask(taskId: string, data: {
   userId?: string;
   dueAt?: string | null;
   status?: string;
+  type?: string;
 }) {
   const workspace = await ensurePaidWorkspace();
 
@@ -1951,6 +2128,7 @@ export async function updateTask(taskId: string, data: {
   if (data.description !== undefined) updateData.description = data.description;
   if (data.priority) updateData.priority = data.priority;
   if (data.userId) updateData.userId = data.userId;
+  if (data.type) updateData.type = data.type;
   if (data.dueAt !== undefined) updateData.dueAt = data.dueAt ? new Date(data.dueAt) : null;
   if (data.status) {
     updateData.status = data.status;
@@ -1998,6 +2176,7 @@ type GetConversationsOptions = {
   includeConnections?: boolean;
   runMaintenance?: boolean;
   assignedToMe?: boolean;
+  conversationId?: string;
 };
 
 export async function getConversations(since?: string, filterConnectionId?: string, options: GetConversationsOptions = {}): Promise<{
@@ -2016,6 +2195,7 @@ export async function getConversations(since?: string, filterConnectionId?: stri
   const includeConnections = options.includeConnections ?? true;
   const runMaintenance = options.runMaintenance ?? !since;
   const assignedToMe = options.assignedToMe ?? true;
+  const conversationId = options.conversationId;
 
   if (runMaintenance) {
     // Keep expensive self-healing out of high-frequency polling requests.
@@ -2065,6 +2245,9 @@ export async function getConversations(since?: string, filterConnectionId?: stri
 
   const filter: any = { contact: { organizationId: orgId } };
   const filterAnd: Record<string, unknown>[] = [];
+  if (conversationId) {
+    filter.id = conversationId;
+  }
 
   // Add connection filtering logic based on user role
   if (workspace.role !== 'owner') {
@@ -2162,9 +2345,10 @@ export async function getConversations(since?: string, filterConnectionId?: stri
         productId: true,
         address: true,
         isLead: true,
-        avatarUrl: true,
         assignedUserId: true,
+        closerId: true,
         assignedUser: { select: { name: true } },
+        closer: { select: { name: true } },
         contactProducts: {
           select: {
             id: true,
@@ -2217,12 +2401,16 @@ export async function getConversations(since?: string, filterConnectionId?: stri
 
   const conversations = (await prisma.conversation.findMany({
     where: filter,
-    take: 100,
+    take: conversationId ? 1 : 150,
     include: conversationInclude,
     orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
   })) as any[];
 
-  const mapped = conversations.map((conversation) => {
+  const visibleConversations = conversations
+    .filter((conversation) => !isSuspiciousEmptyConversationRecord(conversation))
+    .slice(0, 100);
+
+  const mapped = visibleConversations.map((conversation) => {
     const lastMessage = conversation.messages[0]; // Messages are fetched DESC, so [0] is the newest
     const preview = lastMessage
       ? formatConversationMessage(
@@ -2266,6 +2454,8 @@ export async function getConversations(since?: string, filterConnectionId?: stri
       isLead: conversation.contact.isLead,
       assignedUserId: conversation.contact.assignedUserId || null,
       assignedUserName: conversation.contact.assignedUser?.name || null,
+      closerId: conversation.contact.closerId || null,
+      closerName: conversation.contact.closer?.name || null,
       messageCount: conversation._count?.messages ?? conversation.messages.length,
       canReply: Boolean(
         (whatsappConnection?.provider === 'META' && whatsappConnection?.accessToken && whatsappConnection.phoneNumberId) ||
@@ -2525,13 +2715,14 @@ async function sendEvolutionTextWithFallback(input: {
   token: string;
   phone: string;
   text: string;
+  quotedMessageId?: string;
 }) {
   const candidates = getOutboundWhatsAppNumberCandidates(input.phone);
   let lastError: unknown = null;
 
   for (const candidate of candidates) {
     try {
-      const result = await evolution.sendText(input.instanceName, input.token, candidate, input.text);
+      const result = await evolution.sendText(input.instanceName, input.token, candidate, input.text, input.quotedMessageId);
       if (result.error || result.status === 500 || result.status === 400 || result.status === 404) {
         throw new Error(`Evolution API Error: ${getEvolutionErrorMessage(result)}`);
       }
@@ -2554,6 +2745,7 @@ async function sendEvolutionMediaWithFallback(input: {
   mimetype: string;
   caption?: string;
   fileName?: string;
+  quotedMessageId?: string;
 }) {
   const candidates = getOutboundWhatsAppNumberCandidates(input.phone);
   let lastError: unknown = null;
@@ -2569,6 +2761,7 @@ async function sendEvolutionMediaWithFallback(input: {
         input.mimetype,
         input.caption || '',
         input.fileName,
+        input.quotedMessageId
       );
       if (result.error || result.status === 500 || result.status === 400 || result.status === 404) {
         throw new Error(`Evolution API Error: ${getEvolutionErrorMessage(result)}`);
@@ -2584,18 +2777,11 @@ async function sendEvolutionMediaWithFallback(input: {
 }
 
 function cleanOutboundMimeType(value: string) {
-  const clean = value.split(';')[0]?.trim().toLowerCase();
-  return clean || 'application/octet-stream';
+  return cleanMediaMimeType(value);
 }
 
 function normalizeOutboundMediaType(mediatype: string, mimetype: string) {
-  const media = mediatype.toLowerCase();
-  if (['image', 'audio', 'video', 'document'].includes(media)) return media;
-  const cleanMime = cleanOutboundMimeType(mimetype);
-  if (cleanMime.startsWith('image/')) return 'image';
-  if (cleanMime.startsWith('audio/')) return 'audio';
-  if (cleanMime.startsWith('video/')) return 'video';
-  return 'document';
+  return normalizeMediaType(mediatype, mimetype);
 }
 
 function getOutboundMediaLabel(mediatype: string, fileName?: string) {
@@ -2612,7 +2798,7 @@ function buildMetaMediaPayload(mediatype: string, mediaId: string, fileName?: st
   return { type: 'document', document: { id: mediaId, filename: fileName || 'arquivo' } };
 }
 
-export async function sendConversationMessage(conversationId: string, content: string) {
+export async function sendConversationMessage(conversationId: string, content: string, quotedMessageId?: string) {
   const workspace = await ensurePaidWorkspace();
   const trimmedContent = content.trim();
   const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || '';
@@ -2690,6 +2876,7 @@ export async function sendConversationMessage(conversationId: string, content: s
         token: decryptedToken,
         phone: conversation.contact.phone,
         text: trimmedContent,
+        quotedMessageId,
       });
 
       response = result;
@@ -2702,6 +2889,7 @@ export async function sendConversationMessage(conversationId: string, content: s
         to: sentTo,
         type: 'text',
         text: { body: trimmedContent },
+        ...(quotedMessageId ? { context: { message_id: quotedMessageId } } : {}),
       });
 
       response = result;
@@ -2717,6 +2905,7 @@ export async function sendConversationMessage(conversationId: string, content: s
         type: 'TEXT',
         content: trimmedContent,
         waMessageId,
+        quotedMessageId,
         whatsAppConnectionId: connection.id,
       },
     });
@@ -2765,29 +2954,25 @@ export async function sendConversationMessage(conversationId: string, content: s
   }
 }
 
-export async function sendMediaMessage(input: {
-  conversationId: string;
-  base64: string;
-  mediatype: string;
-  mimetype: string;
-  fileName?: string;
-}) {
+export async function sendConversationMedia(conversationId: string, base64: string, mediatype: string, mimetype: string, fileName?: string, caption?: string, quotedMessageId?: string) {
   const workspace = await ensurePaidWorkspace();
   const envWhatsAppToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() || '';
-  const rawBase64 = input.base64.includes('base64,')
-    ? input.base64.split('base64,')[1]
-    : input.base64;
+  const rawBase64 = base64.includes('base64,')
+    ? base64.split('base64,')[1]
+    : base64;
   const rawBase64Length = rawBase64.length;
   const buffer = Buffer.from(rawBase64, 'base64');
-  const mediatype = normalizeOutboundMediaType(input.mediatype, input.mimetype);
-  const mimetype = cleanOutboundMimeType(input.mimetype);
-  const dbType = mediatype.toUpperCase();
-  const fileName = input.fileName || (mediatype === 'document' ? 'arquivo' : `media.${mimetype.split('/')[1] || 'bin'}`);
-  const content = getOutboundMediaLabel(mediatype, fileName);
+  const normalizedMedia = normalizeOutboundMediaInput({ fileName, mediatype, mimetype });
+  const normalizedMediatype = normalizedMedia.mediatype;
+  const normalizedMimetype = normalizedMedia.mimetype;
+  const dbType = normalizedMediatype.toUpperCase();
+  const finalFileName = fileName || (normalizedMediatype === 'document' ? 'arquivo' : `media.${normalizedMimetype.split('/')[1] || 'bin'}`);
+  const trimmedCaption = caption?.trim() || '';
+  const content = trimmedCaption || getOutboundMediaLabel(normalizedMediatype, finalFileName);
 
   const conversation = await prisma.conversation.findFirst({
     where: {
-      id: input.conversationId,
+      id: conversationId,
       contact: { organizationId: workspace.organizationId },
     },
     include: { contact: true },
@@ -2801,6 +2986,7 @@ export async function sendMediaMessage(input: {
       direction: 'OUTBOUND',
       type: dbType,
       content,
+      quotedMessageId,
       status: 'SENDING',
       mediaStatus: 'PROCESSING',
     },
@@ -2811,8 +2997,8 @@ export async function sendMediaMessage(input: {
       organizationId: workspace.organizationId,
       messageId: message.id,
       base64: rawBase64,
-      mimeType: mimetype,
-      originalFileName: fileName,
+      mimeType: normalizedMimetype,
+      originalFileName: finalFileName,
     });
   } catch (storageError) {
     await prisma.message.update({
@@ -2888,10 +3074,11 @@ export async function sendMediaMessage(input: {
         token: decryptedToken,
         phone: conversation.contact.phone,
         base64: rawBase64,
-        mediatype,
-        mimetype,
-        caption: mediatype === 'document' ? '' : '',
-        fileName,
+        mediatype: normalizedMediatype,
+        mimetype: normalizedMimetype,
+        caption: trimmedCaption,
+        fileName: finalFileName,
+        quotedMessageId,
       });
       response = result;
       sentTo = to;
@@ -2901,17 +3088,31 @@ export async function sendMediaMessage(input: {
       if (!connection.phoneNumberId) {
         throw new Error('Meta phone number ID is not configured for outbound media');
       }
-      const mediaId = await uploadWhatsAppMedia(accessToken, {
-        phoneNumberId: connection.phoneNumberId,
-        buffer,
-        mimeType: mimetype,
-        fileName,
-      });
-      const mediaPayload = buildMetaMediaPayload(mediatype, mediaId, fileName);
+      let mediaId: string;
+      try {
+        mediaId = await uploadWhatsAppMedia(accessToken, {
+          phoneNumberId: connection.phoneNumberId,
+          buffer,
+          mimeType: normalizedMimetype,
+          fileName: finalFileName,
+        });
+      } catch (uploadError) {
+        if (normalizedMediatype !== 'document' || normalizedMimetype === 'application/octet-stream') {
+          throw uploadError;
+        }
+        mediaId = await uploadWhatsAppMedia(accessToken, {
+          phoneNumberId: connection.phoneNumberId,
+          buffer,
+          mimeType: 'application/octet-stream',
+          fileName: finalFileName,
+        });
+      }
+      const mediaPayload = buildMetaMediaPayload(normalizedMediatype, mediaId, finalFileName);
       const result = await sendWhatsAppMessage(accessToken, {
         phoneNumberId: connection.phoneNumberId,
         to: sentTo,
         ...(mediaPayload as any),
+        ...(quotedMessageId ? { context: { message_id: quotedMessageId } } : {}),
       });
       response = { mediaId, result };
       waMessageId = result?.messages?.[0]?.id || null;
@@ -2969,6 +3170,8 @@ export async function sendMediaMessage(input: {
           sentTo,
           mediatype,
           mimetype,
+          normalizedMediatype,
+          normalizedMimetype,
           fileName,
           fileSize: buffer.byteLength,
           base64Bytes: rawBase64Length,
@@ -3009,12 +3212,14 @@ export async function sendMediaMessage(input: {
         direction: 'OUTBOUND',
         errorMsg: error instanceof Error ? error.message : 'Unknown error',
         payload: {
-          conversationId: input.conversationId,
+          conversationId: conversationId,
           provider: connection.provider,
           phoneOriginal: conversation.contact.phone,
           sentTo,
           mediatype,
           mimetype,
+          normalizedMediatype,
+          normalizedMimetype,
           fileName,
           fileSize: buffer.byteLength,
           base64Bytes: rawBase64Length,
@@ -3601,6 +3806,25 @@ export async function updateWhatsAppProfile(data: { name?: string; status?: stri
   return results;
 }
 
+export async function getTaskNotifications() {
+  const workspace = await ensurePaidWorkspace();
+  const currentUserId = await getCurrentUserId();
+  if (!currentUserId) return { count: 0 };
+
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  const count = await prisma.task.count({
+    where: {
+      userId: currentUserId,
+      status: { not: "DONE" },
+      dueAt: { lte: today },
+    },
+  });
+
+  return { count };
+}
+
 export async function getContactProfile(contactPhone: string) {
   const workspace = await ensurePaidWorkspace();
   const connection = await prisma.whatsAppConnection.findFirst({
@@ -3710,6 +3934,8 @@ export async function updateContactProfile(contactId: string, data: {
   origin?: string | null;
   potentialValue?: number | null;
   interestArea?: string | null;
+  assignedUserId?: string | null;
+  closerId?: string | null;
 }) {
   const workspace = await ensurePaidWorkspace();
   const contact = await prisma.contact.findFirst({
@@ -3767,9 +3993,142 @@ export async function updateContactProfile(contactId: string, data: {
 
   await updatePotentialValue(contact.id);
 
-
+  revalidatePath('/leads');
+  revalidatePath('/conversations');
+  revalidatePath('/contacts');
 
   return updated;
+}
+
+export async function archiveLead(contactId: string) {
+  const workspace = await ensurePaidWorkspace();
+  const updated = await prisma.contact.updateMany({
+    where: { id: contactId, organizationId: workspace.organizationId },
+    data: { isArchived: true },
+  });
+  if (updated.count === 0) throw new Error("Lead not found or access denied");
+
+  revalidatePath("/leads");
+  return { success: true };
+}
+
+export async function unarchiveLead(contactId: string) {
+  const workspace = await ensurePaidWorkspace();
+  const updated = await prisma.contact.updateMany({
+    where: { id: contactId, organizationId: workspace.organizationId },
+    data: { isArchived: false },
+  });
+  if (updated.count === 0) throw new Error("Lead not found or access denied");
+
+  revalidatePath("/leads");
+  return { success: true };
+}
+
+export async function getArchivedLeads(): Promise<LeadData[]> {
+  const workspace = await ensurePaidWorkspace();
+
+  const leadsDb = await prisma.contact.findMany({
+    where: { organizationId: workspace.organizationId, isLead: true, isArchived: true },
+    select: {
+      id: true,
+      name: true,
+      company: true,
+      phone: true,
+      email: true,
+      notes: true,
+      origin: true,
+      potentialValue: true,
+      updatedAt: true,
+      monthlyRevenue: true,
+      mainChallenges: true,
+      productId: true,
+      assignedUserId: true,
+      closerId: true,
+      isArchived: true,
+      product: { select: { name: true, price: true } },
+      assignedUser: { select: { name: true } },
+      closer: { select: { name: true } },
+      contactProducts: {
+        select: {
+          id: true,
+          productId: true,
+          customName: true,
+          customPrice: true,
+          product: { select: { name: true, price: true } },
+        },
+      },
+      conversations: {
+        orderBy: { updatedAt: 'desc' },
+        take: 1,
+        select: {
+          id: true,
+          stage: true,
+          temperature: true,
+          lastMessageAt: true,
+          analyses: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { riskLevel: true, urgency: true, nextConcreteStep: true },
+          },
+        },
+      },
+      tasks: {
+        where: { status: { not: 'DONE' } },
+        select: { id: true, dueAt: true },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  return leadsDb.map((lead: any) => {
+    const convo = lead.conversations?.[0];
+    const aiAnalysis = convo?.analyses?.[0];
+    const cps = lead.contactProducts || [];
+
+    let totalProductValue = 0;
+    cps.forEach((cp: any) => {
+      const price = cp.customPrice !== null ? cp.customPrice : (cp.product?.price || 0);
+      totalProductValue += price;
+    });
+
+    return {
+      id: lead.id,
+      name: lead.name,
+      company: lead.company || '',
+      stage: 'Arquivo',
+      stageKey: convo?.stage || 'LEAD',
+      temperature: convo?.temperature || 'COLD',
+      value: lead.potentialValue ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.potentialValue) : 'Não informado',
+      potentialValue: lead.potentialValue,
+      lastContact: convo?.lastMessageAt ? 'Recente' : 'Sem contato',
+      origin: lead.origin,
+      phone: lead.phone,
+      email: lead.email,
+      notes: lead.notes,
+      conversationId: convo?.id || null,
+      monthlyRevenue: lead.monthlyRevenue,
+      mainChallenges: lead.mainChallenges,
+      productId: lead.productId,
+      productName: lead.product?.name || null,
+      productIds: cps.filter((cp: any) => cp.productId).map((cp: any) => cp.productId),
+      productNames: cps.map((cp: any) => cp.customName || cp.product?.name).filter(Boolean),
+      totalProductValue: totalProductValue > 0 ? totalProductValue : null,
+      totalProductValueFormatted: totalProductValue > 0 ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalProductValue) : null,
+      assignedUserId: lead.assignedUserId,
+      assignedUserName: lead.assignedUser?.name || null,
+      closerId: lead.closerId,
+      closerName: lead.closer?.name || null,
+      lastContactAt: convo?.lastMessageAt ? convo.lastMessageAt.toISOString() : null,
+      openTasksCount: lead.tasks.length,
+      overdueTasksCount: lead.tasks.filter((t: any) => t.dueAt && new Date(t.dueAt) < new Date()).length,
+      nextTask: lead.tasks.length > 0 ? lead.tasks.sort((a: any, b: any) => new Date(a.dueAt || 0).getTime() - new Date(b.dueAt || 0).getTime())[0] : null,
+      latestRiskLevel: aiAnalysis?.riskLevel || null,
+      latestUrgency: aiAnalysis?.urgency || null,
+      latestNextStep: aiAnalysis?.nextConcreteStep || null,
+      isArchived: lead.isArchived,
+      closedDeal: null,
+    };
+  });
 }
 
 export async function addCustomProductToContact(contactId: string, name: string, price: number) {
@@ -4509,13 +4868,13 @@ export async function forwardMessages(sourceMessageIds: string[], targetConversa
           let mediatype = msg.type.toLowerCase();
           mediatype = normalizeOutboundMediaType(mediatype, mimetype);
 
-          await sendMediaMessage({
-            conversationId: targetConversation.id,
+          await sendConversationMedia(
+            targetConversation.id,
             base64,
             mediatype,
             mimetype,
-            fileName: msg.media?.originalFileName || 'encaminhado',
-          });
+            msg.media?.originalFileName || 'encaminhado'
+          );
           successCount++;
         }
       }
@@ -4556,6 +4915,9 @@ export async function syncAfterReconnect() {
   const token = decryptToken(connection.instanceToken);
 
   let newMessagesCount = 0;
+  let skippedInvalidJid = 0;
+  let skippedNoMessages = 0;
+  let skippedNoNewMessages = 0;
 
   try {
     const chats = await evolution.findChats(instanceName, token);
@@ -4565,49 +4927,26 @@ export async function syncAfterReconnect() {
 
     const syncChat = async (chat: any) => {
       const remoteJid = chat.id || chat.remoteJid;
-      if (!remoteJid || remoteJid.endsWith('@g.us')) return 0; // Skip groups
+      const parsedJid = parseWhatsAppJid(remoteJid);
+      if (!parsedJid.isPersonal || !parsedJid.phone) {
+        skippedInvalidJid += 1;
+        return 0;
+      }
 
-      const phone = remoteJid.split('@')[0];
+      const phone = parsedJid.phone;
 
       const messages = await evolution.findMessages(instanceName, token, remoteJid, 50);
 
-      if (!messages || messages.length === 0) return 0;
+      const importableMessages = (messages || [])
+        .map((msg: any) => normalizeEvolutionMessageForImport(msg, remoteJid))
+        .filter(Boolean) as NonNullable<ReturnType<typeof normalizeEvolutionMessageForImport>>[];
 
-      let dbContact = await prisma.contact.findFirst({
-        where: {
-          organizationId: orgId,
-          phone: { in: getBrazilianPhoneVariations(phone) }
-        }
-      });
-
-      if (!dbContact) {
-        dbContact = await prisma.contact.create({
-          data: {
-            phone,
-            name: chat.name || chat.pushName || phone,
-            organizationId: orgId,
-          }
-        });
+      if (importableMessages.length === 0) {
+        skippedNoMessages += 1;
+        return 0;
       }
 
-      const conversation = await prisma.conversation.findFirst({
-        where: { contactId: dbContact.id, status: 'OPEN', whatsAppConnectionId: connection.id },
-        orderBy: { updatedAt: 'desc' },
-      });
-
-      const activeConversation = conversation || await prisma.conversation.create({
-        data: {
-          contactId: dbContact.id,
-          status: 'OPEN',
-          stage: 'PRIMEIRO_CONTATO',
-          temperature: 'COLD',
-          lastMessageAt: new Date(),
-          whatsAppConnectionId: connection.id,
-        },
-      });
-
-      let latestMsgDate = activeConversation.lastMessageAt || new Date(0);
-      const waMessageIds = Array.from(new Set(messages.map((msg: any) => msg.key?.id).filter(Boolean))) as string[];
+      const waMessageIds = Array.from(new Set(importableMessages.map((msg) => msg.waMessageId)));
       const existingMessages = waMessageIds.length > 0
         ? await prisma.message.findMany({
           where: { waMessageId: { in: waMessageIds } },
@@ -4616,49 +4955,52 @@ export async function syncAfterReconnect() {
         : [];
       const existingMessageIds = new Set(existingMessages.map((message) => message.waMessageId).filter(Boolean));
       const queuedMessageIds = new Set<string>();
-      const newMessageData = [];
+      const messagesToCreate = [];
 
-      for (const msg of messages) {
-        const waMessageId = msg.key?.id;
-        if (!waMessageId) continue;
-        if (existingMessageIds.has(waMessageId) || queuedMessageIds.has(waMessageId)) continue;
-
-        const isOutbound = msg.key.fromMe;
-        const msgTimestamp = msg.messageTimestamp ? new Date(msg.messageTimestamp * 1000) : new Date();
-
-        const content =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          msg.message?.documentMessage?.fileName ||
-          'Mensagem importada (Mídia/Contato)';
-
-        let type = 'TEXT';
-        const messageType = msg.messageType || Object.keys(msg.message || {})[0] || '';
-
-        if (messageType === 'audioMessage') type = 'AUDIO';
-        else if (messageType === 'imageMessage') type = 'IMAGE';
-        else if (messageType === 'videoMessage') type = 'VIDEO';
-        else if (messageType === 'documentMessage') type = 'DOCUMENT';
-        else if (messageType === 'stickerMessage') type = 'STICKER';
-        else if (messageType === 'contactMessage' || messageType === 'contactsArrayMessage') type = 'CONTACT';
-
-        queuedMessageIds.add(waMessageId);
-        newMessageData.push({
-          conversationId: activeConversation.id,
-          waMessageId,
-          direction: isOutbound ? 'OUTBOUND' : 'INBOUND',
-          type,
-          content: content || 'Mensagem importada',
-          timestamp: msgTimestamp,
-          status: isOutbound ? 'READ' : 'RECEIVED',
-          waMessageKey: msg.key || null,
-          mediaStatus: isMediaMessageType(type) ? 'PENDING' : 'NONE',
-        });
-
-        if (msgTimestamp > latestMsgDate) latestMsgDate = msgTimestamp;
+      for (const msg of importableMessages) {
+        if (existingMessageIds.has(msg.waMessageId) || queuedMessageIds.has(msg.waMessageId)) continue;
+        queuedMessageIds.add(msg.waMessageId);
+        messagesToCreate.push(msg);
       }
+
+      if (messagesToCreate.length === 0) {
+        skippedNoNewMessages += 1;
+        return 0;
+      }
+
+      const contactResolution = await resolveOrCreateContact({
+        organizationId: orgId,
+        phone,
+        name: chat.name || chat.pushName || phone,
+        assignedUserId: connection.userId || workspace.id,
+        source: 'Evolution reconnect sync',
+      });
+      const dbContact = contactResolution.contact;
+
+      const latestMsgDate = messagesToCreate.reduce((latest, msg) => (
+        msg.timestamp > latest ? msg.timestamp : latest
+      ), new Date(0));
+
+      const activeConversation = await resolveOpenConversation({
+        contactId: dbContact.id,
+        whatsAppConnectionId: connection.id,
+        stage: 'PRIMEIRO_CONTATO',
+        temperature: 'COLD',
+        lastMessageAt: latestMsgDate,
+      });
+
+      const newMessageData = messagesToCreate.map((msg) => ({
+        conversationId: activeConversation.id,
+        waMessageId: msg.waMessageId,
+        direction: msg.direction,
+        type: msg.type,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        status: msg.status,
+        waMessageKey: msg.waMessageKey,
+        waMessagePayload: msg.waMessagePayload,
+        mediaStatus: msg.mediaStatus,
+      }));
 
       const result = newMessageData.length > 0
         ? await prisma.message.createMany({ data: newMessageData, skipDuplicates: true })
@@ -4679,6 +5021,21 @@ export async function syncAfterReconnect() {
       newMessagesCount += results.reduce((sum, count) => sum + count, 0);
     }
 
+    await prisma.integrationLog.create({
+      data: {
+        connectionId: connection.id,
+        event: 'SYNC_AFTER_RECONNECT',
+        direction: 'INBOUND',
+        statusCode: 200,
+        payload: {
+          inspectedChats: recentChats.length,
+          newMessages: newMessagesCount,
+          skippedInvalidJid,
+          skippedNoMessages,
+          skippedNoNewMessages,
+        },
+      },
+    }).catch(() => null);
 
     return { success: true, newMessages: newMessagesCount };
   } catch (e) {
@@ -4718,7 +5075,12 @@ export async function syncSingleConversation(conversationId: string): Promise<{ 
     const token = decryptToken(connection.instanceToken);
 
     const phone = conversation.contact.phone;
-    const remoteJid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+    const rawJid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+    const parsedJid = parseWhatsAppJid(rawJid);
+    if (!parsedJid.isPersonal || !parsedJid.phone) {
+      return { success: false, newMessages: 0, error: 'Invalid JID for this conversation' };
+    }
+    const remoteJid = rawJid;
 
     const messages = await evolution.findMessages(instanceName, token, remoteJid, 50);
     if (!messages || messages.length === 0) {
@@ -4797,6 +5159,139 @@ export async function syncSingleConversation(conversationId: string): Promise<{ 
   }
 }
 
+export type SuspiciousEmptyChatArtifact = {
+  conversationId: string;
+  contactId: string;
+  name: string;
+  phone: string;
+  connectionId: string | null;
+  updatedAt: string;
+  contactConversationCount: number;
+  safeToDeleteContact: boolean;
+};
+
+async function findSuspiciousEmptyChatArtifacts(orgId: string, input?: { limit?: number; conversationIds?: string[] }) {
+  const rows = await prisma.conversation.findMany({
+    where: {
+      contact: { organizationId: orgId },
+      messages: { none: {} },
+      ...(input?.conversationIds?.length ? { id: { in: input.conversationIds } } : {}),
+    },
+    include: {
+      contact: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          company: true,
+          interestArea: true,
+          origin: true,
+          notes: true,
+          productId: true,
+          address: true,
+          isLead: true,
+          assignedUserId: true,
+          contactProducts: { select: { id: true } },
+          _count: {
+            select: {
+              conversations: true,
+              tasks: true,
+              meetings: true,
+              closedDeals: true,
+              contactProducts: true,
+            },
+          },
+        },
+      },
+      _count: { select: { messages: true } },
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: Math.min(Math.max(input?.limit || 100, 1), 500),
+  });
+
+  return rows
+    .filter((row) => isSuspiciousEmptyConversationRecord(row))
+    .filter((row) => (
+      row.contact._count.tasks === 0 &&
+      row.contact._count.meetings === 0 &&
+      row.contact._count.closedDeals === 0 &&
+      row.contact._count.contactProducts === 0
+    ))
+    .map((row): SuspiciousEmptyChatArtifact => ({
+      conversationId: row.id,
+      contactId: row.contactId,
+      name: row.contact.name,
+      phone: row.contact.phone,
+      connectionId: row.whatsAppConnectionId,
+      updatedAt: row.updatedAt.toISOString(),
+      contactConversationCount: row.contact._count.conversations,
+      safeToDeleteContact: row.contact._count.conversations === 1,
+    }));
+}
+
+export async function previewSuspiciousEmptyChats(limit = 100) {
+  const workspace = await ensurePaidWorkspace();
+  if (workspace.role !== 'owner') {
+    throw new Error('Apenas administradores podem revisar conversas suspeitas.');
+  }
+
+  const artifacts = await findSuspiciousEmptyChatArtifacts(workspace.organizationId, { limit });
+  return { success: true, count: artifacts.length, artifacts };
+}
+
+export async function cleanupSuspiciousEmptyChats(conversationIds: string[]) {
+  const workspace = await ensurePaidWorkspace();
+  if (workspace.role !== 'owner') {
+    throw new Error('Apenas administradores podem limpar conversas suspeitas.');
+  }
+
+  const uniqueIds = Array.from(new Set(conversationIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    throw new Error('Informe ao menos uma conversa suspeita para limpar.');
+  }
+
+  const artifacts = await findSuspiciousEmptyChatArtifacts(workspace.organizationId, {
+    conversationIds: uniqueIds,
+    limit: uniqueIds.length,
+  });
+  const artifactIds = artifacts.map((artifact) => artifact.conversationId);
+  const contactIdsToDelete = artifacts
+    .filter((artifact) => artifact.safeToDeleteContact)
+    .map((artifact) => artifact.contactId);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const conversations = artifactIds.length > 0
+      ? await tx.conversation.deleteMany({ where: { id: { in: artifactIds } } })
+      : { count: 0 };
+    const contacts = contactIdsToDelete.length > 0
+      ? await tx.contact.deleteMany({ where: { id: { in: contactIdsToDelete }, organizationId: workspace.organizationId } })
+      : { count: 0 };
+    return { conversationsDeleted: conversations.count, contactsDeleted: contacts.count };
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      organizationId: workspace.organizationId,
+      userId: workspace.id,
+      action: 'SUSPICIOUS_EMPTY_CHAT_CLEANUP',
+      entity: 'Conversation',
+      metadata: {
+        requestedConversationIds: uniqueIds,
+        cleanedConversationIds: artifactIds,
+        deletedContactIds: contactIdsToDelete,
+        skipped: uniqueIds.length - artifactIds.length,
+        ...result,
+      },
+    },
+  }).catch(() => null);
+
+  revalidatePath('/conversations');
+  revalidatePath('/contacts');
+
+  return { success: true, ...result, skipped: uniqueIds.length - artifactIds.length, artifacts };
+}
+
 export async function deleteConversation(conversationId: string): Promise<boolean> {
   const workspace = await ensurePaidWorkspace();
 
@@ -4828,7 +5323,97 @@ export async function deleteConversation(conversationId: string): Promise<boolea
 // MEETING SCHEDULING (Google Calendar)
 // ----------------------------------------------------------------------------
 
-export async function getOrganizationUsers() {
+type MeetingAuditMetadata = Record<string, string | number | boolean | null | undefined>;
+
+export type OrganizationUserData = {
+  id: string;
+  name: string | null;
+  email: string;
+  role: string;
+  googleCalendarConnected: boolean;
+};
+
+export type CreateMeetingResult = {
+  success: true;
+  meetingId: string;
+  googleEventId: string;
+  meetLink: string | null;
+  googleCalendarHtmlLink: string | null;
+  message: string;
+} | {
+  success: false;
+  error: string;
+  code: string;
+};
+
+export type MeetingAuditLogData = {
+  id: string;
+  action: string;
+  status: 'SUCCESS' | 'FAILED' | 'INFO';
+  title: string | null;
+  contactEmail: string | null;
+  scheduledAt: string | null;
+  googleEventId: string | null;
+  googleCalendarHtmlLink: string | null;
+  error: string | null;
+  code: string | null;
+  userName: string | null;
+  userEmail: string | null;
+  createdAt: string;
+};
+
+function getMeetingErrorCode(error: unknown) {
+  const err = error as any;
+  return String(err?.code || err?.name || 'MEETING_CREATE_FAILED');
+}
+
+function getMeetingErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'Não foi possível criar o agendamento.';
+}
+
+async function recordMeetingAuditLog(params: {
+  organizationId: string;
+  userId?: string | null;
+  action: string;
+  entityId?: string | null;
+  metadata?: MeetingAuditMetadata;
+}) {
+  try {
+    const metadata = params.metadata
+      ? Object.fromEntries(Object.entries(params.metadata).filter(([, value]) => value !== undefined))
+      : undefined;
+
+    await prisma.auditLog.create({
+      data: {
+        organizationId: params.organizationId,
+        userId: params.userId || null,
+        action: params.action,
+        entity: 'Meeting',
+        entityId: params.entityId || undefined,
+        metadata,
+      },
+    });
+  } catch (error) {
+    console.error('Failed to write meeting audit log:', error);
+  }
+}
+
+function getMeetingAuditStatus(action: string): 'SUCCESS' | 'FAILED' | 'INFO' {
+  if (action.includes('FAIL')) return 'FAILED';
+  if (action.includes('SUCCESS') || action === 'MEETING_CREATED') return 'SUCCESS';
+  return 'INFO';
+}
+
+function readMeetingAuditMetadata(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+}
+
+export async function getOrganizationUsers(): Promise<OrganizationUserData[]> {
   const workspace = await ensurePaidWorkspace();
   const users = await prisma.user.findMany({
     where: { organizationId: workspace.organizationId },
@@ -4848,7 +5433,13 @@ export async function getOrganizationUsers() {
     }
   }
 
-  return users;
+  return users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    googleCalendarConnected: Boolean(user.googleAccessToken),
+  }));
 }
 
 export async function getCurrentUserId() {
@@ -4882,7 +5473,7 @@ export async function createMeeting(data: {
   contactEmail?: string;
   notes?: string;
   timeZone?: string;
-}) {
+}): Promise<CreateMeetingResult> {
   const workspace = await ensurePaidWorkspace();
   const session = await auth();
   if (!session.userId) throw new Error("Unauthorized");
@@ -4892,110 +5483,289 @@ export async function createMeeting(data: {
   });
   if (!currentUserRecord) throw new Error("User not found");
 
+  const requestId = randomUUID();
+  const scheduledAt = data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt);
+  const contactEmail = data.contactEmail?.trim() || '';
+  const baseAuditMetadata = {
+    requestId,
+    contactId: data.contactId,
+    closerId: data.closerId || null,
+    title: data.title,
+    type: data.type,
+    duration: data.duration,
+    scheduledAt: Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt.toISOString(),
+    contactEmail: contactEmail || null,
+    timeZone: data.timeZone || 'America/Sao_Paulo',
+  };
+
+  await recordMeetingAuditLog({
+    organizationId: workspace.organizationId,
+    userId: currentUserRecord.id,
+    action: 'MEETING_CREATE_ATTEMPT',
+    metadata: baseAuditMetadata,
+  });
+
+  const fail = async (error: string, code: string, extra?: MeetingAuditMetadata): Promise<CreateMeetingResult> => {
+    await recordMeetingAuditLog({
+      organizationId: workspace.organizationId,
+      userId: currentUserRecord.id,
+      action: 'MEETING_CREATE_FAILED',
+      metadata: {
+        ...baseAuditMetadata,
+        ...(extra || {}),
+        error,
+        code,
+      },
+    });
+    return { success: false, error, code };
+  };
+
+  if (!data.closerId) {
+    return fail('Selecione um closer responsável antes de agendar.', 'CLOSER_REQUIRED');
+  }
+
+  if (!contactEmail) {
+    return fail('Informe o e-mail do contato para criar o convite oficial no Google Agenda.', 'CONTACT_EMAIL_REQUIRED');
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    return fail('O e-mail do contato parece inválido. Corrija antes de agendar.', 'CONTACT_EMAIL_INVALID');
+  }
+
+  if (Number.isNaN(scheduledAt.getTime())) {
+    return fail('A data do agendamento é inválida.', 'INVALID_SCHEDULED_AT');
+  }
+
+  if (scheduledAt.getTime() <= Date.now()) {
+    return fail('A data do agendamento precisa estar no futuro.', 'SCHEDULED_AT_IN_PAST');
+  }
+
+  if (!['PRESENCIAL', 'ONLINE'].includes(data.type)) {
+    return fail('Tipo de reunião inválido.', 'INVALID_MEETING_TYPE');
+  }
+
+  if (!Number.isFinite(data.duration) || data.duration <= 0) {
+    return fail('Duração da reunião inválida.', 'INVALID_MEETING_DURATION');
+  }
+
+  const closer = await prisma.user.findFirst({
+    where: { id: data.closerId, organizationId: workspace.organizationId },
+    select: { id: true, name: true, email: true, googleAccessToken: true },
+  });
+
+  if (!closer) {
+    return fail('Closer não encontrado nesta organização.', 'CLOSER_NOT_FOUND');
+  }
+
+  if (!closer.googleAccessToken) {
+    return fail('O closer selecionado não conectou o Google Agenda. Escolha outro closer ou conecte o Google Agenda em Configurações.', 'CLOSER_GOOGLE_NOT_CONNECTED', {
+      closerEmail: closer.email,
+    });
+  }
+
   // 1. Get contact and conversation to send notifications
   const contact = await prisma.contact.findFirst({
     where: { id: data.contactId, organizationId: workspace.organizationId },
     include: { conversations: { orderBy: { updatedAt: 'desc' }, take: 1 } }
   });
-  if (!contact) throw new Error("Contact not found");
-
-  // Save the contact email if it was provided and the contact doesn't have one
-  if (data.contactEmail && !contact.email) {
-    await prisma.contact.update({
-      where: { id: contact.id },
-      data: { email: data.contactEmail }
-    });
+  if (!contact) {
+    return fail('Contato não encontrado.', 'CONTACT_NOT_FOUND');
   }
 
   const activeConversation = contact.conversations[0];
 
-  // 2. Create Event via Google Calendar API if closer is provided and has token
-  let googleEventId = undefined;
-  let meetLink = undefined;
+  let eventDetails: { eventId: string; meetLink?: string | null; htmlLink?: string | null };
+  try {
+    const { createCalendarEvent } = await import('@/lib/google-calendar');
+    eventDetails = await createCalendarEvent({
+      userId: data.closerId,
+      title: data.title,
+      startAt: scheduledAt,
+      endAt: new Date(scheduledAt.getTime() + data.duration * 60000),
+      attendeeEmail: contactEmail,
+      description: data.notes,
+      location: data.location,
+      isOnline: data.type === 'ONLINE',
+      timeZone: data.timeZone,
+      requestId,
+    });
 
-  if (data.closerId && data.contactEmail) {
-    try {
-      const { createCalendarEvent } = await import('@/lib/google-calendar');
-      const eventDetails = await createCalendarEvent({
-        userId: data.closerId,
-        title: data.title,
-        startAt: data.scheduledAt,
-        endAt: new Date(data.scheduledAt.getTime() + data.duration * 60000),
-        attendeeEmail: data.contactEmail,
-        description: data.notes,
-        location: data.location,
-        isOnline: data.type === 'ONLINE',
-        timeZone: data.timeZone,
-      });
-      googleEventId = eventDetails.eventId;
-      meetLink = eventDetails.meetLink;
-    } catch (e: any) {
-      console.warn("Failed to create Google Calendar event, proceeding without it:", e.message);
-    }
-  } else if (!data.contactEmail) {
-    console.warn("No contactEmail provided, skipping Google Calendar invite.");
+    await recordMeetingAuditLog({
+      organizationId: workspace.organizationId,
+      userId: currentUserRecord.id,
+      action: 'MEETING_GOOGLE_SUCCESS',
+      metadata: {
+        ...baseAuditMetadata,
+        googleEventId: eventDetails.eventId,
+        googleCalendarHtmlLink: eventDetails.htmlLink || null,
+        meetLink: eventDetails.meetLink || null,
+      },
+    });
+  } catch (error) {
+    const errorMessage = getMeetingErrorMessage(error);
+    const errorCode = getMeetingErrorCode(error);
+    await recordMeetingAuditLog({
+      organizationId: workspace.organizationId,
+      userId: currentUserRecord.id,
+      action: 'MEETING_GOOGLE_FAILURE',
+      metadata: {
+        ...baseAuditMetadata,
+        error: errorMessage,
+        code: errorCode,
+      },
+    });
+    return fail(errorMessage, errorCode);
   }
 
-  // 3. Save Meeting to DB
-  const meeting = await prisma.meeting.create({
-    data: {
-      contactId: data.contactId,
-      organizationId: workspace.organizationId,
-      closerId: data.closerId,
-      createdById: currentUserRecord.id,
-      title: data.title,
-      type: data.type,
-      duration: data.duration,
-      scheduledAt: data.scheduledAt,
-      location: data.location,
-      meetLink: meetLink,
-      googleEventId: googleEventId,
-      contactEmail: data.contactEmail,
-      notes: data.notes,
+  let meeting;
+  try {
+    meeting = await prisma.$transaction(async (tx) => {
+      if (contactEmail && !contact.email) {
+        await tx.contact.update({
+          where: { id: contact.id },
+          data: { email: contactEmail }
+        });
+      }
+
+      return tx.meeting.create({
+        data: {
+          contactId: data.contactId,
+          organizationId: workspace.organizationId,
+          closerId: data.closerId,
+          createdById: currentUserRecord.id,
+          title: data.title,
+          type: data.type,
+          duration: data.duration,
+          scheduledAt,
+          location: data.location,
+          meetLink: eventDetails.meetLink || null,
+          googleEventId: eventDetails.eventId,
+          googleCalendarHtmlLink: eventDetails.htmlLink || null,
+          calendarSyncStatus: 'SYNCED',
+          calendarSyncError: null,
+          calendarSyncedAt: new Date(),
+          calendarLastCheckedAt: new Date(),
+          contactEmail,
+          notes: data.notes,
+        }
+      });
+    });
+  } catch (error) {
+    const errorMessage = getMeetingErrorMessage(error);
+    const errorCode = getMeetingErrorCode(error);
+    try {
+      const { deleteCalendarEvent } = await import('@/lib/google-calendar');
+      await deleteCalendarEvent(data.closerId, eventDetails.eventId);
+    } catch (rollbackError) {
+      console.error('Failed to rollback Google Calendar event after meeting DB failure:', rollbackError);
     }
+
+    return fail('O evento foi criado no Google Agenda, mas o sistema não conseguiu salvar o agendamento. O sistema tentou remover o evento do Google. Tente novamente.', errorCode, {
+      originalError: errorMessage,
+      googleEventId: eventDetails.eventId,
+    });
+  }
+
+  await recordMeetingAuditLog({
+    organizationId: workspace.organizationId,
+    userId: currentUserRecord.id,
+    action: 'MEETING_CREATED',
+    entityId: meeting.id,
+    metadata: {
+      ...baseAuditMetadata,
+      googleEventId: eventDetails.eventId,
+      googleCalendarHtmlLink: eventDetails.htmlLink || null,
+      meetLink: eventDetails.meetLink || null,
+    },
   });
 
   // 4. Send Confirmation Message & Schedule Reminder
   if (activeConversation) {
-    const formattedDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: data.timeZone || 'America/Sao_Paulo' }).format(data.scheduledAt);
+    const formattedDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: data.timeZone || 'America/Sao_Paulo' }).format(scheduledAt);
 
     // Confirmation Message
-    const confirmationText = `✅ Reunião confirmada para *${formattedDate}*.\n${data.type === 'ONLINE' ? `Link: ${meetLink || 'Enviado por email'}` : `Local: ${data.location}`}`;
-    await sendConversationMessage(activeConversation.id, confirmationText).catch(console.error);
-
-    // Schedule reminder for the day of the meeting (e.g. 2 hours before)
-    const reminderTime = new Date(data.scheduledAt.getTime() - 2 * 60 * 60 * 1000);
-    const reminderText = `⏳ Olá! Passando para lembrar da nossa reunião hoje às *${new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short', timeZone: data.timeZone || 'America/Sao_Paulo' }).format(data.scheduledAt)}*.\n${data.type === 'ONLINE' ? `Link do Meet: ${meetLink || 'No seu email'}` : `Endereço: ${data.location}`}\nAté logo!`;
-
-    // Use the updated scheduleMessages with clearQueue = false
-    await scheduleMessages(activeConversation.id, [{ content: reminderText, scheduledFor: reminderTime }], false).catch(console.error);
-
-    // 5. Auto-move stage to "AGENDADO"
-    // Find pipeline stage "Agendado" or create one if it doesn't exist
-    let scheduledStage = await prisma.pipelineStage.findFirst({
-      where: { organizationId: workspace.organizationId, name: { equals: "Agendado", mode: "insensitive" } }
+    const confirmationText = `Reunião confirmada para *${formattedDate}*.\n${data.type === 'ONLINE' ? `Link: ${eventDetails.meetLink || 'Enviado por email'}` : `Local: ${data.location}`}`;
+    await sendConversationMessage(activeConversation.id, confirmationText).catch(async (error) => {
+      console.error(error);
+      await recordMeetingAuditLog({
+        organizationId: workspace.organizationId,
+        userId: currentUserRecord.id,
+        action: 'MEETING_WHATSAPP_CONFIRMATION_FAILED',
+        entityId: meeting.id,
+        metadata: {
+          ...baseAuditMetadata,
+          error: getMeetingErrorMessage(error),
+        },
+      });
     });
 
-    if (!scheduledStage) {
-      scheduledStage = await prisma.pipelineStage.create({
-        data: {
-          organizationId: workspace.organizationId,
-          name: "Agendado",
-          color: "bg-blue-500",
-          order: 99
-        }
-      });
-    }
+    // Schedule reminder for the day of the meeting (e.g. 2 hours before)
+    const reminderTime = new Date(scheduledAt.getTime() - 2 * 60 * 60 * 1000);
+    const reminderText = `Olá! Passando para lembrar da nossa reunião hoje às *${new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short', timeZone: data.timeZone || 'America/Sao_Paulo' }).format(scheduledAt)}*.\n${data.type === 'ONLINE' ? `Link do Meet: ${eventDetails.meetLink || 'No seu email'}` : `Endereço: ${data.location}`}\nAté logo!`;
 
-    if (activeConversation.stage !== scheduledStage.name) {
-      await updateConversationStage(activeConversation.id, scheduledStage.name);
+    // Use the updated scheduleMessages with clearQueue = false
+    await scheduleMessages(activeConversation.id, [{ content: reminderText, scheduledFor: reminderTime }], false).catch(async (error) => {
+      console.error(error);
+      await recordMeetingAuditLog({
+        organizationId: workspace.organizationId,
+        userId: currentUserRecord.id,
+        action: 'MEETING_REMINDER_SCHEDULE_FAILED',
+        entityId: meeting.id,
+        metadata: {
+          ...baseAuditMetadata,
+          error: getMeetingErrorMessage(error),
+        },
+      });
+    });
+
+    try {
+      // 5. Auto-move stage to "AGENDADO"
+      // Find pipeline stage "Agendado" or create one if it doesn't exist
+      let scheduledStage = await prisma.pipelineStage.findFirst({
+        where: { organizationId: workspace.organizationId, name: { equals: "Agendado", mode: "insensitive" } }
+      });
+
+      if (!scheduledStage) {
+        scheduledStage = await prisma.pipelineStage.create({
+          data: {
+            organizationId: workspace.organizationId,
+            name: "Agendado",
+            color: "bg-blue-500",
+            order: 99
+          }
+        });
+      }
+
+      if (activeConversation.stage !== scheduledStage.name) {
+        await updateConversationStage(activeConversation.id, scheduledStage.name);
+      }
+    } catch (error) {
+      console.error(error);
+      await recordMeetingAuditLog({
+        organizationId: workspace.organizationId,
+        userId: currentUserRecord.id,
+        action: 'MEETING_STAGE_UPDATE_FAILED',
+        entityId: meeting.id,
+        metadata: {
+          ...baseAuditMetadata,
+          error: getMeetingErrorMessage(error),
+        },
+      });
     }
   }
 
+  revalidatePath('/dashboard');
+  revalidatePath('/leads');
+  revalidatePath('/conversations');
 
-
-
-  return meeting;
+  return {
+    success: true,
+    meetingId: meeting.id,
+    googleEventId: eventDetails.eventId,
+    meetLink: eventDetails.meetLink || null,
+    googleCalendarHtmlLink: eventDetails.htmlLink || null,
+    message: 'Reunião criada no Google Agenda com sucesso.',
+  };
 }
 
 export async function getUpcomingMeetings(filterUserId?: string) {
@@ -5021,6 +5791,51 @@ export async function getUpcomingMeetings(filterUserId?: string) {
       closer: { select: { name: true } }
     },
     orderBy: { scheduledAt: 'asc' }
+  });
+}
+
+export async function getRecentMeetingAuditLogs(limit = 12): Promise<MeetingAuditLogData[]> {
+  const workspace = await ensurePaidWorkspace();
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      organizationId: workspace.organizationId,
+      action: {
+        in: [
+          'MEETING_CREATE_ATTEMPT',
+          'MEETING_GOOGLE_SUCCESS',
+          'MEETING_GOOGLE_FAILURE',
+          'MEETING_CREATE_FAILED',
+          'MEETING_CREATED',
+          'MEETING_WHATSAPP_CONFIRMATION_FAILED',
+          'MEETING_REMINDER_SCHEDULE_FAILED',
+          'MEETING_STAGE_UPDATE_FAILED',
+        ],
+      },
+    },
+    include: {
+      user: { select: { name: true, email: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Math.max(limit, 1), 50),
+  });
+
+  return rows.map((row) => {
+    const metadata = readMeetingAuditMetadata(row.metadata);
+    return {
+      id: row.id,
+      action: row.action,
+      status: getMeetingAuditStatus(row.action),
+      title: typeof metadata.title === 'string' ? metadata.title : null,
+      contactEmail: typeof metadata.contactEmail === 'string' ? metadata.contactEmail : null,
+      scheduledAt: typeof metadata.scheduledAt === 'string' ? metadata.scheduledAt : null,
+      googleEventId: typeof metadata.googleEventId === 'string' ? metadata.googleEventId : null,
+      googleCalendarHtmlLink: typeof metadata.googleCalendarHtmlLink === 'string' ? metadata.googleCalendarHtmlLink : null,
+      error: typeof metadata.error === 'string' ? metadata.error : null,
+      code: typeof metadata.code === 'string' ? metadata.code : null,
+      userName: row.user?.name || null,
+      userEmail: row.user?.email || null,
+      createdAt: row.createdAt.toISOString(),
+    };
   });
 }
 
@@ -5884,6 +6699,7 @@ export async function inviteToMasterclassAction(leadId: string, data: { reason: 
     <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
       <p>Bom dia!</p>
       <p>Convidei <strong>${contact.name}</strong> para nossa masterclass deste mês. Por favor, fazer onboarding!</p>
+      <p><strong>Contato:</strong> ${contact.phone}${contact.email ? ` | ${contact.email}` : ''}</p>
       <p><strong>Motivo do convite:</strong> ${data.reason}</p>
       <p><em>ps: caso não tenha mais vaga para este mês, ajustar para confirmar presença para o próximo.</em></p>
       <br>
@@ -5894,6 +6710,8 @@ export async function inviteToMasterclassAction(leadId: string, data: { reason: 
   const text = `Bom dia!
 
 Convidei ${contact.name} para nossa masterclass deste mês. Por favor, fazer onboarding!
+
+Contato: ${contact.phone}${contact.email ? ` | ${contact.email}` : ''}
 
 Motivo do convite: ${data.reason}
 
@@ -5926,6 +6744,8 @@ export type ContactData = {
   productName: string | null;
   assignedUserId: string | null;
   assignedUserName: string | null;
+  closerId: string | null;
+  closerName: string | null;
   avatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -6000,7 +6820,9 @@ export async function getContacts(options?: {
         productId: true,
         product: { select: { name: true } },
         assignedUserId: true,
+        closerId: true,
         assignedUser: { select: { name: true } },
+        closer: { select: { name: true } },
         avatarUrl: true,
         createdAt: true,
         updatedAt: true,
@@ -6033,6 +6855,8 @@ export async function getContacts(options?: {
     productName: row.product?.name || null,
     assignedUserId: row.assignedUserId,
     assignedUserName: row.assignedUser?.name || null,
+    closerId: row.closerId || null,
+    closerName: row.closer?.name || null,
     avatarUrl: row.avatarUrl,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

@@ -7,8 +7,36 @@ import { isBypassUser } from "@/lib/workspace";
 import { resolveOrCreateContact } from "@/lib/contact-resolver";
 import { revalidatePath } from "next/cache";
 import { resolveOpenConversation } from "@/lib/conversation-resolver";
+import { parseWhatsAppJid } from "@/lib/whatsapp-jid";
 
 export const runtime = "nodejs";
+
+async function logSkippedJid(input: {
+  connectionId: string;
+  requestId: string;
+  event: string;
+  remoteJid: string | null | undefined;
+  reason: string | null;
+  kind: string;
+  waMessageId?: string | null;
+}) {
+  await prisma.integrationLog.create({
+    data: {
+      connectionId: input.connectionId,
+      event: 'WEBHOOK_SKIPPED_INVALID_JID',
+      direction: 'INBOUND',
+      statusCode: 200,
+      errorMsg: input.reason || 'invalid_jid',
+      payload: {
+        requestId: input.requestId,
+        webhookEvent: input.event,
+        remoteJid: input.remoteJid || null,
+        kind: input.kind,
+        waMessageId: input.waMessageId || null,
+      },
+    }
+  }).catch(err => console.error('Failed to log skipped jid:', err));
+}
 
 /**
  * Evolution API Webhook Handler
@@ -103,10 +131,19 @@ export async function POST(req: NextRequest) {
 
 
 
-      // Ignore group messages (groups use @g.us suffix)
-      if (key.remoteJid?.endsWith("@g.us")) {
-        console.log(`[WEBHOOK] Skipping group message from ${key.remoteJid} (ID: ${requestId})`);
-        return NextResponse.json({ skipped: true, reason: "group" });
+      const parsedJid = parseWhatsAppJid(key?.remoteJid);
+      if (!parsedJid.isPersonal || !parsedJid.phone) {
+        console.log(`[WEBHOOK] Skipping non-personal JID ${key?.remoteJid || 'missing'} (${parsedJid.reason || parsedJid.kind}, ID: ${requestId})`);
+        await logSkippedJid({
+          connectionId: connection.id,
+          requestId,
+          event: event || 'messages.upsert',
+          remoteJid: key?.remoteJid,
+          reason: parsedJid.reason,
+          kind: parsedJid.kind,
+          waMessageId: key?.id || null,
+        });
+        return NextResponse.json({ skipped: true, reason: parsedJid.reason || parsedJid.kind });
       }
 
       // Handle reaction messages
@@ -135,7 +172,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ skipped: true, reason: "protocol" });
       }
 
-      const phone = key.remoteJid.split("@")[0];
+      const phone = parsedJid.phone;
       const isOutbound = key.fromMe;
       const name = (!isOutbound && data.pushName) ? data.pushName : phone;
       const orgId = connection.organizationId;

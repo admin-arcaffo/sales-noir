@@ -8,6 +8,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  ExternalLink,
   MessageSquare,
   Mic,
   MoreVertical,
@@ -51,6 +52,7 @@ import {
   Share2,
   Sparkles,
   Loader2,
+  Clock,
 } from "lucide-react";
 import {
   getConversations,
@@ -88,13 +90,19 @@ import {
   getTasks,
   toggleTaskStatus,
   type TaskData,
+  getOrganizationUsers,
 } from "@/actions/crm";
 import type { AnalysisResponse } from "@/lib/ai/prompts";
+import { MessageTime } from "./_components/MessageTime";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useToast } from "@/components/ui/Toast";
 import { Modal } from "@/components/ui/Modal";
 import { temperatureDotClasses } from "@/components/ui/noir";
 import { useFloatingChat } from "@/context/FloatingChatContext";
 import { CHAT_CACHE_INVALIDATED_EVENT, clearChatCache } from "@/lib/chat-cache";
+import { normalizeOutboundMediaInput } from "@/lib/outbound-media";
+import { SmartText } from "@/components/ui/SmartText";
+import { detectAll, type DetectedEntity } from "@/lib/detect-entities";
 
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
 const MeetingModal = lazy(() => import("@/app/(app)/_components/MeetingModal").then((module) => ({ default: module.MeetingModal })));
@@ -142,34 +150,41 @@ function isTemporaryWhatsAppMediaUrl(value?: string | null) {
 const DIRECT_MEDIA_UPLOAD_LIMIT = 4 * 1024 * 1024;
 
 export type SmartEntity = {
-  type: 'address' | 'email' | 'maps_link';
+  type: 'address' | 'email' | 'maps_link' | 'phone' | 'url';
   value: string;
+  phoneNormalized?: string;
 };
 
 export const extractSmartEntities = (text: string): SmartEntity[] => {
   const entities: SmartEntity[] = [];
   if (!text) return entities;
 
-  // Email regex
-  const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
-  if (emailMatch) {
-    entities.push({ type: 'email', value: emailMatch[0] });
-  }
+  const detected = detectAll(text);
 
-  // Google Maps regex
-  const mapsMatch = text.match(/(https?:\/\/(?:www\.)?google\.com\/maps[^\s]+|https?:\/\/maps\.app\.goo\.gl\/[^\s]+|https?:\/\/g\.page\/[^\s]+)/);
-  if (mapsMatch) {
-    entities.push({ type: 'maps_link', value: mapsMatch[0] });
-  } else {
-    // Address regex (approx: 1-3 words followed by comma and number, optionally a hyphen and neighborhood)
-    // Examplo: Rua Joao Silva, 343 ou Rua X, 123 - Centro
-    const addressMatch = text.match(/\b([A-Za-zÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ]+){0,2}),\s*(\d+)(?:\s*-\s*[A-Za-zÀ-ÖØ-öø-ÿ\s]+)?\b/);
-    if (addressMatch) {
-      entities.push({ type: 'address', value: addressMatch[0] });
+  for (const d of detected) {
+    if (d.type === 'email') {
+      if (!entities.some(e => e.type === 'email' && e.value === d.value)) {
+        entities.push({ type: 'email', value: d.value });
+      }
+    } else if (d.type === 'url') {
+      const isMaps = /google\.com\/maps|maps\.app\.goo\.gl|g\.page/i.test(d.value);
+      if (isMaps) {
+        if (!entities.some(e => e.type === 'maps_link')) {
+          entities.push({ type: 'maps_link', value: d.value });
+        }
+      } else {
+        if (!entities.some(e => e.type === 'url' && e.value === d.value)) {
+          entities.push({ type: 'url', value: d.value });
+        }
+      }
+    } else if (d.type === 'phone') {
+      if (!entities.some(e => e.type === 'phone' && e.value === d.value)) {
+        entities.push({ type: 'phone', value: d.value, phoneNormalized: d.phoneNormalized });
+      }
     }
   }
 
-  return entities;
+  return entities.slice(0, 4);
 };
 
 function formatDateTimeInput(date: Date) {
@@ -438,6 +453,7 @@ export default function ConversationsPage() {
   const [products, setProducts] = useState<ProductData[]>([]);
   const [leadOrigins, setLeadOrigins] = useState<{ id: string; name: string }[]>([]);
   const [pipelineStages, setPipelineStages] = useState<PipelineStageData[]>([]);
+  const [organizationUsers, setOrganizationUsers] = useState<any[]>([]);
   const [draftProducts, setDraftProducts] = useState<string[]>([]);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [draftOrigin, setDraftOrigin] = useState("");
@@ -449,8 +465,10 @@ export default function ConversationsPage() {
   const [scheduleGlobalTime, setScheduleGlobalTime] = useState("");
   const [scheduledMessages, setScheduledMessages] = useState([{ id: Date.now().toString(), content: "" }]);
   const [pendingSchedules, setPendingSchedules] = useState<any[]>([]);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  const [quotingMessage, setQuotingMessage] = useState<any>(null);
   const { showToast } = useToast();
 
   // Unread messages tracking
@@ -550,6 +568,13 @@ export default function ConversationsPage() {
     ).length;
   };
 
+  // Update document title with unread count
+  useEffect(() => {
+    const totalUnread = conversations.reduce((acc, convo) => acc + getUnreadCount(convo), 0);
+    const baseTitle = "Chat | Dealeto";
+    document.title = totalUnread > 0 ? `(${totalUnread}) ${baseTitle}` : baseTitle;
+  }, [conversations, lastReadMap, selectedConvo]);
+
   // Load cached conversations and last read map from localStorage on mount for instant visual load
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -569,6 +594,26 @@ export default function ConversationsPage() {
       }
     }
   }, []);
+
+  // Check scheduled notifications on a timer
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const interval = setInterval(() => {
+      void checkScheduledNotifications();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useKeyboardShortcuts({
+    onEscape: () => {
+      if (isScheduleOpen) setIsScheduleOpen(false);
+      else if (isContactProfileModalOpen) setIsContactProfileModalOpen(false);
+    },
+    onSend: () => void handleSendMessage(),
+    onSearch: () => {
+      document.querySelector<HTMLInputElement>('input[placeholder*="Buscar"]')?.focus();
+    }
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -826,11 +871,20 @@ export default function ConversationsPage() {
       const list = await getScheduledMessages(convoId);
       setPendingSchedules(list || []);
       setScheduledMessages([{ id: Date.now().toString(), content: "" }]);
+      setEditingScheduleId(null);
       setScheduleGlobalDate("");
       setScheduleGlobalTime("");
     } catch (err) {
       console.error("Failed to load scheduled messages", err);
     }
+  };
+
+  const handleEditSchedule = (schedule: any) => {
+    setEditingScheduleId(schedule.id);
+    setScheduledMessages([{ id: Date.now().toString(), content: schedule.content }]);
+    const d = new Date(schedule.scheduledFor);
+    setScheduleGlobalDate(d.toISOString().split("T")[0]);
+    setScheduleGlobalTime(d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
   };
 
   const handleSaveSchedule = async () => {
@@ -875,8 +929,14 @@ export default function ConversationsPage() {
         };
       });
       
+      if (editingScheduleId) {
+        const { cancelScheduledMessage } = await import("@/actions/crm");
+        await cancelScheduledMessage(editingScheduleId);
+      }
+
       await scheduleMessages(selectedConvo, messagesToSchedule);
-      showToast("Agendamento salvo com sucesso!", "success");
+      showToast(editingScheduleId ? "Agendamento editado com sucesso!" : "Agendamento salvo com sucesso!", "success");
+      setEditingScheduleId(null);
       void loadScheduledMessages(selectedConvo);
       setIsScheduleOpen(false);
     } catch (err: any) {
@@ -914,6 +974,7 @@ export default function ConversationsPage() {
   const selectConversation = (conversationId: string, source: ConversationData[]) => {
     const conversation = source.find((item) => item.id === conversationId);
     setSelectedConvo(conversationId);
+    chatContext.openFloatingConversation(conversationId, source);
     setDraftStage(conversation?.stageKey || "PRIMEIRO_CONTATO");
     setNotesDraft(conversation?.notes || "");
     setDraftProducts(conversation?.productIds || []);
@@ -1003,20 +1064,30 @@ export default function ConversationsPage() {
     }
   };
 
-  const handleSaveContactField = async (field: 'company' | 'email' | 'interestArea', value: string) => {
+  const handleSaveContactField = async (field: 'company' | 'email' | 'interestArea' | 'assignedUserId' | 'closerId', value: string) => {
     if (!activeConvo) return;
     const previousConversations = [...conversations];
-    
+
+    const finalValue = value.trim() || null;
+
     // Optimistic Update
     setConversations(current => current.map(c => {
       if (c.contactId === activeConvo.contactId) {
-        return { ...c, [field]: value.trim() };
+        if (field === 'assignedUserId') {
+           const userName = finalValue ? organizationUsers.find(u => u.id === finalValue)?.name || null : null;
+           return { ...c, assignedUserId: finalValue, assignedUserName: userName };
+        }
+        if (field === 'closerId') {
+           const userName = finalValue ? organizationUsers.find(u => u.id === finalValue)?.name || null : null;
+           return { ...c, closerId: finalValue, closerName: userName };
+        }
+        return { ...c, [field]: finalValue };
       }
       return c;
     }));
     
     try {
-      await updateContactProfile(activeConvo.contactId, { [field]: value.trim() });
+      await updateContactProfile(activeConvo.contactId, { [field]: finalValue });
     } catch (e) {
       setConversations(previousConversations);
       showToast(`Erro ao salvar campo.`, "error");
@@ -1243,6 +1314,7 @@ export default function ConversationsPage() {
     getProducts().then((p) => { if (alive) setProducts(p); }).catch(console.error);
     getLeadOrigins().then((o) => { if (alive) setLeadOrigins(o); }).catch(console.error);
     getPipelineStages().then((s) => { if (alive) setPipelineStages(s); }).catch(console.error);
+    getOrganizationUsers().then((u) => { if (alive) setOrganizationUsers(u); }).catch(console.error);
 
     async function refreshData() {
       if (!alive) return;
@@ -1556,10 +1628,7 @@ export default function ConversationsPage() {
   };
 
   const getClientMediaType = (file: File) => {
-    if (file.type.startsWith("image/")) return "image";
-    if (file.type.startsWith("audio/")) return "audio";
-    if (file.type.startsWith("video/")) return "video";
-    return "document";
+    return normalizeOutboundMediaInput({ fileName: file.name, mimetype: file.type }).mediatype;
   };
 
   const appendConversationMessage = (newMessage: ConversationMessage) => {
@@ -1618,10 +1687,13 @@ export default function ConversationsPage() {
     });
   };
 
-  const uploadToSignedUrl = async (file: File, uploadUrl: string) => {
+  const uploadToSignedUrl = async (file: File, uploadUrl: string, uploadMimeType?: string) => {
     const formData = new FormData();
+    const uploadFile = uploadMimeType && uploadMimeType !== file.type
+      ? new File([file], file.name, { type: uploadMimeType })
+      : file;
     formData.append("cacheControl", "3600");
-    formData.append("", file, file.name);
+    formData.append("", uploadFile, file.name);
 
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -1666,7 +1738,7 @@ export default function ConversationsPage() {
       throw new Error(signedPayload.error || "Não foi possível preparar upload direto.");
     }
 
-    await uploadToSignedUrl(file, signedPayload.uploadUrl);
+    await uploadToSignedUrl(file, signedPayload.uploadUrl, signedPayload.uploadMimeType);
     setUploadProgress(90);
 
     const sendResponse = await fetch("/api/media/send-from-storage", {
@@ -1675,9 +1747,10 @@ export default function ConversationsPage() {
       body: JSON.stringify({
         conversationId: activeConvo.id,
         storageKey: signedPayload.storageKey,
-        mediatype,
-        mimetype: file.type || "application/octet-stream",
+        mediatype: signedPayload.mediatype || mediatype,
+        mimetype: signedPayload.mimetype || file.type || "application/octet-stream",
         fileName: file.name,
+        quotedMessageId: quotingMessage?.waMessageId || quotingMessage?.id || "",
       }),
     });
     const payload = await sendResponse.json().catch(() => ({}));
@@ -1714,6 +1787,7 @@ export default function ConversationsPage() {
 
     try {
       const payload = await sendMediaFile(file);
+      setQuotingMessage(null);
 
       if (!payload.success) {
         throw new Error(payload.error || "Failed to send media");
@@ -1733,6 +1807,7 @@ export default function ConversationsPage() {
   const sendRecordedAudio = async (blob: Blob) => {
     const audioFile = blob instanceof File ? blob : new File([blob], "audio.webm", { type: blob.type || "audio/webm" });
     const payload = await sendMediaFile(audioFile, "audio");
+    setQuotingMessage(null);
 
     if (!payload.success) {
       throw new Error(payload.error || "Failed to send audio");
@@ -1841,7 +1916,12 @@ export default function ConversationsPage() {
 
     try {
       // BACKGROUND: Envia o dado para o servidor e API
-      const newMessage = await sendConversationMessage(activeConvo.id, messageText);
+      const newMessage = await sendConversationMessage(
+        activeConvo.id,
+        messageText,
+        quotingMessage?.waMessageId || quotingMessage?.id
+      );
+      setQuotingMessage(null);
 
       // SUBSTITUIÇÃO: Troca a mensagem temporária pela oficial do banco (para ter o ID real)
       setConversations((current) => current.map((conversation) => (
@@ -2430,6 +2510,22 @@ export default function ConversationsPage() {
                   </Suspense>
                 </div>
               )}
+              {quotingMessage && (
+                <div className="flex items-center justify-between bg-zinc-900/50 p-2 text-xs border-t border-white/5 rounded-t-lg mb-1 mx-1">
+                  <div className="flex items-center gap-2 overflow-hidden opacity-70">
+                    <svg className="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+                    <div className="flex flex-col truncate">
+                      <span className="font-semibold text-emerald-400">
+                        {quotingMessage.direction === 'inbound' ? 'Cliente' : 'Você'}
+                      </span>
+                      <span className="truncate text-zinc-300 max-w-xs">{quotingMessage.text || quotingMessage.content || "Mídia"}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => setQuotingMessage(null)} className="text-zinc-500 hover:text-zinc-300">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               
               {isRecording ? (
                 <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-xl px-4 py-3 animate-pulse">
@@ -2670,7 +2766,7 @@ export default function ConversationsPage() {
                 <div className="w-20 h-20 rounded-[2rem] bg-gradient-to-br from-amber-500/20 to-amber-500/5 flex items-center justify-center mx-auto mb-6 border border-amber-500/20 shadow-[0_0_40px_-10px_rgba(245,158,11,0.2)]">
                   <MessageSquare className="w-10 h-10 text-amber-500" />
                 </div>
-                <h3 className="text-2xl font-bold text-white tracking-tight">Sales Arcaffo</h3>
+                <h3 className="text-2xl font-bold text-white tracking-tight">Dealeto</h3>
                 <p className="text-zinc-400 max-w-sm mx-auto">Sua central de atendimento avançada. Escolha uma conversa ao lado para começar.</p>
               </div>
 
@@ -2712,7 +2808,7 @@ export default function ConversationsPage() {
         className={`z-20 flex shrink-0 flex-col bg-[#0a0a0c] transition-all duration-300 ${
           isAnalysisCollapsed 
             ? "w-0 overflow-hidden border-white/5 md:w-12 md:border-l "
-            : "fixed inset-y-0 right-0 z-40 w-full border-l border-white/10 shadow-2xl md:relative md:w-[420px] md:border-white/5 md:shadow-none"
+            : "fixed inset-y-0 right-0 z-40 w-full border-l border-white/10 shadow-2xl md:relative md:w-[420px] md:border-white/5 md:shadow-none pb-[env(safe-area-inset-bottom)] md:pb-0"
         }`}
       >
         <div className={`flex items-center border-b border-white/5 bg-white/[0.02] p-5 ${isAnalysisCollapsed ? "justify-center" : "justify-between"}`}>
@@ -2720,12 +2816,12 @@ export default function ConversationsPage() {
             <div>
               <div className="flex items-center gap-2 mb-0.5">
                 <BrainCircuit className="w-4 h-4 text-zinc-400" />
-                <h2 className="font-semibold text-sm tracking-tight text-zinc-200">Sales Arcaffo</h2>
+                <h2 className="font-semibold text-sm tracking-tight text-zinc-200">Dealeto</h2>
               </div>
               <p className="text-[11px] text-zinc-600">Operação tática da conversa</p>
             </div>
           ) : null}
-          <button 
+          <button
             onClick={() => setIsAnalysisCollapsed(!isAnalysisCollapsed)}
             className="p-1.5 rounded-lg hover:bg-white/10 text-zinc-500 transition-colors"
           >
@@ -2861,44 +2957,35 @@ export default function ConversationsPage() {
                         )}
                       </div>
 
-                      {/* Area de Interesse */}
-                      <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
-                        <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Área de Interesse</span>
-                        {isEditingInterestArea ? (
-                          <div className="mt-1 flex items-center gap-2">
-                            <input
-                              autoFocus
-                              type="text"
-                              className="input-noir py-1 text-xs"
-                              value={editedInterestAreaValue}
-                              onChange={e => setEditedInterestAreaValue(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === "Enter") {
-                                  setIsEditingInterestArea(false);
-                                  handleSaveContactField('interestArea', editedInterestAreaValue);
-                                }
-                                if (e.key === "Escape") setIsEditingInterestArea(false);
-                              }}
-                              onBlur={() => {
-                                setIsEditingInterestArea(false);
-                                handleSaveContactField('interestArea', editedInterestAreaValue);
-                              }}
-                            />
-                          </div>
-                        ) : (
-                          <div className="mt-1 flex items-center justify-between">
-                            <span className="block truncate text-zinc-300">{activeConvo.interestArea || "Não informada"}</span>
-                            <button
-                              onClick={() => {
-                                setEditedInterestAreaValue(activeConvo.interestArea || "");
-                                setIsEditingInterestArea(true);
-                              }}
-                              className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
+                      {/* Responsável e Closer */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Responsável</span>
+                          <select
+                            value={activeConvo.assignedUserId || ""}
+                            onChange={e => handleSaveContactField('assignedUserId', e.target.value)}
+                            className="select-noir w-full py-1 text-xs border-none bg-transparent px-0 outline-none focus:ring-0"
+                          >
+                            <option value="">Nenhum</option>
+                            {organizationUsers.map(user => (
+                              <option key={user.id} value={user.id}>{user.name || user.email}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="group relative rounded-lg border border-white/5 bg-white/[0.03] p-2">
+                          <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">Closer</span>
+                          <select
+                            value={activeConvo.closerId || ""}
+                            onChange={e => handleSaveContactField('closerId', e.target.value)}
+                            className="select-noir w-full py-1 text-xs border-none bg-transparent px-0 outline-none focus:ring-0"
+                          >
+                            <option value="">Nenhum</option>
+                            {organizationUsers.map(user => (
+                              <option key={user.id} value={user.id}>{user.name || user.email}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3204,14 +3291,22 @@ export default function ConversationsPage() {
                                 <p className="text-[10px] text-zinc-300 line-clamp-2">{schedule.content}</p>
                                 <div className="flex items-center justify-between">
                                   <span className="text-[9px] text-zinc-500">
-                                    {new Date(schedule.scheduledFor).toLocaleString('pt-BR')}
+                                    {new Date(schedule.scheduledFor).toLocaleString('pt-BR', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })}
                                   </span>
-                                  <button
-                                    onClick={() => handleCancelSchedule(schedule.id)}
-                                    className="text-[9px] text-red-400 hover:text-red-300"
-                                  >
-                                    Cancelar
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditSchedule(schedule)}
+                                      className="text-[9px] text-blue-400 hover:text-blue-300"
+                                    >
+                                      Editar
+                                    </button>
+                                    <button
+                                      onClick={() => handleCancelSchedule(schedule.id)}
+                                      className="text-[9px] text-red-400 hover:text-red-300"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -3287,6 +3382,17 @@ export default function ConversationsPage() {
               <Pencil className="w-4 h-4" /> Editar
             </button>
           )}
+          <button
+            onClick={() => {
+              const msg = activeConvo?.messages.find(m => m.id === contextMenu.msgId);
+              if (msg) setQuotingMessage(msg);
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+            Responder
+          </button>
           <button 
             onClick={() => {
               setForwardMode(true);
@@ -3857,7 +3963,6 @@ export default function ConversationsPage() {
             isOpen={meetingModalOpen}
             onClose={() => setMeetingModalOpen(false)}
             onSuccess={(email) => {
-              showToast("Reunião agendada com sucesso!");
               if (activeConvo) {
                 // update local conversation stage to AGENDADO if we want, or just re-fetch
                 const newConversations = conversations.map(c => 
@@ -4297,12 +4402,25 @@ function MessageBubble({
         } else {
            showToast("Não foi possível extrair o endereço do link.", "error");
         }
+      } else if (entity.type === 'phone') {
+        const phone = entity.phoneNormalized || entity.value.replace(/\D/g, '');
+        showToast("Número salvo no contato!", "success");
+        onStartChat?.(phone, "");
+      } else if (entity.type === 'url') {
+        window.open(entity.value, '_blank', 'noreferrer');
       }
     } catch (err) {
        console.error("Error saving entity:", err);
        showToast("Erro ao salvar informação.", "error");
     } finally {
        setIsSavingEntity(false);
+    }
+  };
+
+  const handlePhoneEntity = (phone: string, phoneNormalized: string) => {
+    if (contactId) {
+      onStartChat?.(phoneNormalized, "");
+      showToast("Abrindo WhatsApp...", "info");
     }
   };
 
@@ -4386,7 +4504,7 @@ function MessageBubble({
               <>
                 <img onClick={() => setIsLightboxOpen(true)} onError={() => { setRescuedMediaUrl(null); showToast("Imagem indisponível. Tente carregar novamente.", "error"); }} src={currentMediaUrl!} alt="Imagem" className="max-w-full rounded-lg mb-0.5 object-contain max-h-[200px] cursor-pointer" loading="lazy" />
                 {isLightboxOpen && (
-                  <div className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4" onClick={() => setIsLightboxOpen(false)}>
+                  <div className="modal-overlay fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4" onClick={() => setIsLightboxOpen(false)}>
                     <img src={currentMediaUrl!} alt="Imagem Ampliada" className="max-w-full max-h-full object-contain" />
                   </div>
                 )}
@@ -4619,12 +4737,12 @@ function MessageBubble({
 
           {/* === TEXT === */}
           {msg.text && !(isMediaLabel && (msg.type !== "TEXT")) && msg.type === "TEXT" && (
-            <p className="text-[14px] leading-snug whitespace-pre-wrap">{msg.text}</p>
+            <SmartText text={msg.text} contactId={contactId} onPhoneAction={handlePhoneEntity} />
           )}
           
           {/* === CAPTION === */}
           {msg.text && !isMediaLabel && msg.type !== "TEXT" && msg.type !== "DOCUMENT" && msg.type !== "AUDIO" && (
-            <p className="text-[13px] leading-snug whitespace-pre-wrap mt-0.5 opacity-90">{msg.text}</p>
+            <SmartText text={msg.text} contactId={contactId} onPhoneAction={handlePhoneEntity} />
           )}
 
           {/* === REACTION BADGE === */}
@@ -4652,14 +4770,15 @@ function MessageBubble({
                 {msg.status === "SENT" && <Check className="w-3 h-3 opacity-80" />}
                 {msg.status === "DELIVERED" && <CheckCheck className="w-3 h-3 opacity-80" />}
                 {msg.status === "READ" && <CheckCheck className="w-3 h-3 text-blue-500 drop-shadow-sm opacity-90" />}
-                {(!msg.status || msg.status === "PENDING") && <Check className="w-3 h-3 opacity-50" />}
+                {msg.status === "PENDING" && <Clock className="w-3 h-3 opacity-50" />}
+                {!msg.status && <CheckCheck className="w-3 h-3 opacity-80" />}
               </div>
             )}
           </div>
         </div>
 
         {/* Smart Entities Actions */}
-        {smartEntities.length > 0 && contactId && (
+        {smartEntities.length > 0 && (
           <div className={`flex flex-col gap-1 mb-1 transition-opacity ${isOutbound ? 'items-end' : 'items-start'} opacity-20 hover:opacity-100 group-hover:opacity-100`}>
              {smartEntities.map((entity, idx) => (
                 <button
@@ -4670,11 +4789,21 @@ function MessageBubble({
                 >
                    {isSavingEntity ? (
                       <div className="w-3.5 h-3.5 border-2 border-emerald-500/50 border-t-transparent rounded-full animate-spin" />
+                   ) : entity.type === 'email' ? (
+                      <Mail className="w-3.5 h-3.5" />
+                   ) : entity.type === 'phone' ? (
+                      <Phone className="w-3.5 h-3.5" />
+                   ) : entity.type === 'url' ? (
+                      <ExternalLink className="w-3.5 h-3.5" />
                    ) : (
-                      entity.type === 'email' ? <Mail className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />
+                      <MapPin className="w-3.5 h-3.5" />
                    )}
                    <span className="absolute whitespace-nowrap bg-zinc-900 text-[10px] font-medium border border-white/10 px-2 py-0.5 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity -top-7 shadow-lg z-20">
-                      Adicionar {entity.type === 'email' ? 'Email' : 'Endereço'}
+                      {entity.type === 'email' ? 'Salvar Email' :
+                       entity.type === 'phone' ? 'Iniciar Conversa' :
+                       entity.type === 'url' ? 'Abrir Link' :
+                       entity.type === 'maps_link' ? 'Extrair Endereço' :
+                       'Salvar Endereço'}
                    </span>
                 </button>
              ))}
@@ -4684,27 +4813,6 @@ function MessageBubble({
     </div>
     </div>
   );
-}
-
-function MessageTime({ timestamp, fallback }: { timestamp: string; fallback: string }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return <span className="text-[10px] font-mono uppercase tracking-widest">{fallback}</span>;
-  }
-
-  try {
-    const formatted = new Intl.DateTimeFormat('pt-BR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(timestamp));
-    return <span className="text-[10px] font-mono uppercase tracking-widest">{formatted}</span>;
-  } catch {
-    return <span className="text-[10px] font-mono uppercase tracking-widest">{fallback}</span>;
-  }
 }
 
 function ConversationTime({ timestamp, fallback }: { timestamp: string; fallback: string }) {

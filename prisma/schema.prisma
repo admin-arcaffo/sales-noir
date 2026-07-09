@@ -19,7 +19,7 @@ model Organization {
   maxUsers                     Int                  @default(5)
   dealNotificationEmail        String?
   masterclassNotificationEmail String?
-  reportToken                  String?               @unique
+  reportToken                  String?              @unique
   auditLogs                    AuditLog[]
   closedDeals                  ClosedDeal[]
   contactIdentities            ContactIdentity[]
@@ -57,6 +57,7 @@ model User {
   completedTasks      Task[]               @relation("TaskCompletedBy")
   tasks               Task[]
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  closerContacts      Contact[]            @relation("CloserContacts")
   whatsappConnections WhatsAppConnection[]
 }
 
@@ -105,12 +106,15 @@ model Contact {
   origin          String?
   potentialValue  Float?
   isLead          Boolean            @default(false)
+  isArchived      Boolean            @default(false)
   mainChallenges  String?
   monthlyRevenue  Float?
   productId       String?
   assignedUserId  String?
+  closerId        String?
   address         String?
   assignedUser    User?              @relation("AssignedContacts", fields: [assignedUserId], references: [id])
+  closer          User?              @relation("CloserContacts", fields: [closerId], references: [id])
   organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   product         Product?           @relation(fields: [productId], references: [id])
   contactProducts ContactProduct[]
@@ -124,6 +128,7 @@ model Contact {
   @@unique([phone, organizationId])
   @@index([organizationId, isLead, updatedAt])
   @@index([organizationId, assignedUserId])
+  @@index([organizationId, closerId])
 }
 
 model ContactIdentity {
@@ -242,42 +247,43 @@ model ClosedDeal {
 }
 
 model Message {
-  id                    String           @id @default(cuid())
-  conversationId        String
-  whatsAppConnectionId  String?
-  direction             String
-  type                  String
-  content               String?
-  mediaUrl              String?
-  mediaStatus           String           @default("PENDING")
-  mediaError            String?
-  mediaAttempts         Int              @default(0)
-  mediaLastAttemptAt    DateTime?
-  waMessageKey          Json?
-  waMessagePayload      Json?
-  timestamp             DateTime         @default(now())
-  waMessageId           String?          @unique
-  isEdited              Boolean          @default(false)
-  reactions             Json?
-  status                String           @default("SENT")
-  transcript            AudioTranscript?
-  media                 Media?
-  conversation          Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  id                   String           @id @default(cuid())
+  conversationId       String
+  whatsAppConnectionId String?
+  direction            String
+  type                 String
+  content              String?
+  mediaUrl             String?
+  mediaStatus          String           @default("PENDING")
+  mediaError           String?
+  mediaAttempts        Int              @default(0)
+  mediaLastAttemptAt   DateTime?
+  waMessageKey         Json?
+  waMessagePayload     Json?
+  timestamp            DateTime         @default(now())
+  waMessageId          String?          @unique
+  quotedMessageId      String?
+  isEdited             Boolean          @default(false)
+  reactions            Json?
+  status               String           @default("SENT")
+  transcript           AudioTranscript?
+  media                Media?
+  conversation         Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, timestamp])
   @@index([whatsAppConnectionId, timestamp])
 }
 
 model Media {
-  id          String   @id @default(cuid())
-  messageId   String   @unique
-  mimeType    String
-  fileSize    Int?
+  id               String   @id @default(cuid())
+  messageId        String   @unique
+  mimeType         String
+  fileSize         Int?
   originalFileName String?
-  storageKey  String
-  originalUrl String?
-  createdAt   DateTime @default(now())
-  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  storageKey       String
+  originalUrl      String?
+  createdAt        DateTime @default(now())
+  message          Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
 }
 
 model AudioTranscript {
@@ -463,28 +469,34 @@ model ScheduledMessage {
 }
 
 model Meeting {
-  id             String   @id @default(cuid())
-  contactId      String
-  organizationId String
-  closerId       String
-  createdById    String
-  title          String
-  type           String
-  duration       Int
-  scheduledAt    DateTime
-  location       String?
-  meetLink       String?
-  googleEventId  String?
-  contactEmail   String?
-  notes          String?
-  status         String   @default("SCHEDULED")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  closer         User     @relation("MeetingCloser", fields: [closerId], references: [id])
-  contact        Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  createdBy      User     @relation("MeetingCreator", fields: [createdById], references: [id])
+  id                     String    @id @default(cuid())
+  contactId              String
+  organizationId         String
+  closerId               String
+  createdById            String
+  title                  String
+  type                   String
+  duration               Int
+  scheduledAt            DateTime
+  location               String?
+  meetLink               String?
+  googleEventId          String?
+  googleCalendarHtmlLink String?
+  calendarSyncStatus     String    @default("UNKNOWN")
+  calendarSyncError      String?
+  calendarSyncedAt       DateTime?
+  calendarLastCheckedAt  DateTime?
+  contactEmail           String?
+  notes                  String?
+  status                 String    @default("SCHEDULED")
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  closer                 User      @relation("MeetingCloser", fields: [closerId], references: [id])
+  contact                Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdBy              User      @relation("MeetingCreator", fields: [createdById], references: [id])
 
   @@index([organizationId, scheduledAt])
+  @@index([organizationId, calendarSyncStatus, scheduledAt])
   @@index([closerId, scheduledAt])
   @@index([contactId, scheduledAt])
 }

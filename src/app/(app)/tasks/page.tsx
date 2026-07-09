@@ -21,6 +21,8 @@ import {
   Trash2,
   User,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   getContactOptions,
@@ -36,6 +38,9 @@ import { TaskModal } from "@/app/(app)/_components/TaskModal";
 import { TasksCompactList } from "@/app/(app)/_components/TasksCompactList";
 import { TasksKanban } from "@/app/(app)/_components/TasksKanban";
 import { useToast } from "@/components/ui/Toast";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { isOverdue, isDueToday, isUpcoming } from "@/lib/task-utils";
 
 const typeIcons: Record<string, ComponentType<{ className?: string }>> = {
   CALL: Phone,
@@ -69,37 +74,6 @@ const sourceLabels: Record<string, string> = {
   MEETING: "Reunião",
 };
 
-function startOfToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function endOfToday() {
-  const date = new Date();
-  date.setHours(23, 59, 59, 999);
-  return date;
-}
-
-function isSameLocalDay(value: string | null) {
-  if (!value) return false;
-  const date = new Date(value);
-  const today = new Date();
-  return date.getFullYear() === today.getFullYear()
-    && date.getMonth() === today.getMonth()
-    && date.getDate() === today.getDate();
-}
-
-function isOverdue(task: TaskData) {
-  if (task.status === "DONE" || !task.dueAt) return false;
-  return new Date(task.dueAt).getTime() < startOfToday().getTime();
-}
-
-function isUpcoming(task: TaskData) {
-  if (task.status === "DONE" || !task.dueAt) return false;
-  return new Date(task.dueAt).getTime() > endOfToday().getTime();
-}
-
 function formatDateTimeLocal(value: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -125,24 +99,7 @@ type FilterState = {
   responsibleFilter: string;
 };
 
-function loadFilters(): FilterState {
-  if (typeof window === "undefined") return defaultFilters();
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultFilters(), ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return defaultFilters();
-}
 
-function shouldDefaultResponsibleFilter(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return true;
-    const parsed = JSON.parse(raw);
-    return !parsed || typeof parsed !== "object" || !("responsibleFilter" in parsed);
-  } catch { return true; }
-}
 
 function defaultFilters(): FilterState {
   return {
@@ -174,9 +131,29 @@ export default function TasksPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [modalContactId, setModalContactId] = useState("");
 
-  const [filters, setFilters] = useState<FilterState>(loadFilters);
+  const [filters, setFilters] = useState<FilterState>(defaultFilters());
+  const [isHydrated, setIsHydrated] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [useCurrentUserAsDefault, setUseCurrentUserAsDefault] = useState(shouldDefaultResponsibleFilter);
+  const [useCurrentUserAsDefault, setUseCurrentUserAsDefault] = useState(false);
+
+  const [showOverview, setShowOverview] = useState(false);
+  const [showFilterSidebar, setShowFilterSidebar] = useState(false);
+
+  useEscapeKey(showFilterSidebar, () => setShowFilterSidebar(false));
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        setFilters((prev) => ({ ...prev, ...JSON.parse(raw) }));
+      } else {
+        setUseCurrentUserAsDefault(true);
+      }
+    } catch {
+      setUseCurrentUserAsDefault(true);
+    }
+    setIsHydrated(true);
+  }, []);
 
   const updateFilter = useCallback(<K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters((prev) => {
@@ -207,7 +184,7 @@ export default function TasksPage() {
   }, [showToast]);
 
   useEffect(() => {
-    if (!currentUserId || !useCurrentUserAsDefault) return;
+    if (!currentUserId || !useCurrentUserAsDefault || !isHydrated) return;
     setFilters((prev) => {
       if (prev.responsibleFilter === currentUserId) return prev;
       const next = { ...prev, responsibleFilter: currentUserId };
@@ -215,7 +192,7 @@ export default function TasksPage() {
       return next;
     });
     setUseCurrentUserAsDefault(false);
-  }, [currentUserId, useCurrentUserAsDefault]);
+  }, [currentUserId, useCurrentUserAsDefault, isHydrated]);
 
   const handleToggle = async (taskId: string, currentStatus: string) => {
     try {
@@ -269,6 +246,15 @@ export default function TasksPage() {
     }
   };
 
+  useKeyboardShortcuts({
+    onEscape: () => {
+      setDeletingTask(null);
+      setIsTaskModalOpen(false);
+    },
+    onNew: () => setIsTaskModalOpen(true),
+    onSearch: () => document.querySelector<HTMLInputElement>('input[placeholder*="Buscar"]')?.focus()
+  });
+
   const openNewTaskModal = () => {
     setEditingTask(null);
     setModalContactId(filters.contactFilter !== "ALL" ? filters.contactFilter : "");
@@ -309,10 +295,12 @@ export default function TasksPage() {
   });
 
   const activeTasks = filteredTasks.filter((task) => task.status !== "DONE");
-  const overdueTasks = activeTasks.filter(isOverdue);
-  const todayTasks = activeTasks.filter((task) => isSameLocalDay(task.dueAt));
-  const upcomingTasks = activeTasks.filter(isUpcoming);
-  const noDateTasks = activeTasks.filter((task) => !task.dueAt);
+  const overdueTasks = activeTasks.filter((t) => isOverdue(t.dueAt, t.status));
+  const remainingAfterOverdue = activeTasks.filter((t) => !isOverdue(t.dueAt, t.status));
+  const todayTasks = remainingAfterOverdue.filter((t) => isDueToday(t.dueAt));
+  const remainingAfterToday = remainingAfterOverdue.filter((t) => !isDueToday(t.dueAt));
+  const upcomingTasks = remainingAfterToday.filter((t) => isUpcoming(t.dueAt, t.status));
+  const noDateTasks = remainingAfterToday.filter((t) => !t.dueAt);
   const doneTasks = filteredTasks.filter((task) => task.status === "DONE");
   const defaultResponsibleFilter = currentUserId || "ALL";
   const hasFilters = filters.searchTerm !== ""
@@ -376,113 +364,84 @@ export default function TasksPage() {
           </div>
         </header>
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <KpiCard label="Atrasadas" value={tasks.filter(isOverdue).length} tone="red" icon={AlertTriangle} />
-          <KpiCard label="Hoje" value={tasks.filter((task) => task.status !== "DONE" && isSameLocalDay(task.dueAt)).length} tone="amber" icon={Calendar} />
-          <KpiCard label="Abertas" value={tasks.filter((task) => task.status !== "DONE").length} tone="emerald" icon={Clock} />
-          <KpiCard label="Sem data" value={tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length} tone="zinc" icon={Filter} />
-          <KpiCard label="Concluídas" value={tasks.filter((task) => task.status === "DONE").length} tone="blue" icon={CheckCircle2} />
+        {/* Toggle Overview */}
+        <div className="flex items-center pt-2">
+           <button 
+             onClick={() => setShowOverview(!showOverview)} 
+             className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 hover:text-zinc-300 transition-colors"
+           >
+             {showOverview ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+             Resumo Operacional & Indicadores
+           </button>
         </div>
 
-        <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-sm font-bold uppercase tracking-wider text-emerald-300">Briefing operacional</h2>
-              <p className="mt-1 text-sm text-emerald-100/70">
-                {tasks.filter(isOverdue).length > 0
-                  ? `Comece pelas ${tasks.filter(isOverdue).length} tarefa(s) atrasada(s). Elas são o maior risco comercial agora.`
-                  : tasks.filter((task) => task.status !== "DONE" && isSameLocalDay(task.dueAt)).length > 0
-                    ? `Seu foco do dia são ${tasks.filter((task) => task.status !== "DONE" && isSameLocalDay(task.dueAt)).length} tarefa(s) com prazo para hoje.`
-                    : tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length > 0
-                      ? `Há ${tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length} tarefa(s) sem prazo. Defina datas para evitar perda de controle.`
-                      : "Operação em dia. Use a pipeline para identificar leads sem próxima ação."}
-              </p>
-            </div>
-            <button
-              onClick={() => { updateFilter("statusFilter", "OPEN"); updateFilter("searchTerm", ""); }}
-              className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs font-bold text-emerald-200 transition-colors hover:bg-emerald-500/20"
-            >
-              Revisar fila
-            </button>
-          </div>
-        </section>
-
-        <section className="surface-noir-muted p-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8">
-            <div className="relative md:col-span-2 xl:col-span-2">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
-              <input
-                value={filters.searchTerm}
-                onChange={(event) => updateFilter("searchTerm", event.target.value)}
-                placeholder="Buscar tarefa, contato, produto..."
-                className="w-full rounded-lg border border-white/10 bg-white/5 py-2 pl-9 pr-3 text-sm text-zinc-200 outline-none transition-all placeholder:text-zinc-600 focus:border-white/20"
-              />
+        {/* Collapsible Overview */}
+        {showOverview && (
+          <div className="animate-in fade-in slide-in-from-top-2 duration-300 space-y-6">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <KpiCard label="Atrasadas" value={tasks.filter((t) => isOverdue(t.dueAt, t.status)).length} tone="red" icon={AlertTriangle} />
+              <KpiCard label="Hoje" value={tasks.filter((task) => task.status !== "DONE" && isDueToday(task.dueAt)).length} tone="amber" icon={Calendar} />
+              <KpiCard label="Abertas" value={tasks.filter((task) => task.status !== "DONE").length} tone="emerald" icon={Clock} />
+              <KpiCard label="Sem data" value={tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length} tone="zinc" icon={Filter} />
+              <KpiCard label="Concluídas" value={tasks.filter((task) => task.status === "DONE").length} tone="blue" icon={CheckCircle2} />
             </div>
 
-            <FilterSelect value={filters.statusFilter} onChange={(v) => updateFilter("statusFilter", v)}>
-              <option value="ALL">Todos os status</option>
-              <option value="OPEN">Abertas</option>
-              <option value="DONE">Concluídas</option>
-            </FilterSelect>
-
-            <FilterSelect value={filters.typeFilter} onChange={(v) => updateFilter("typeFilter", v)}>
-              <option value="ALL">Todos os tipos</option>
-              {Object.entries(typeLabels).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </FilterSelect>
-
-            <FilterSelect value={filters.priorityFilter} onChange={(v) => updateFilter("priorityFilter", v)}>
-              <option value="ALL">Todas prioridades</option>
-              <option value="URGENT">Urgente</option>
-              <option value="HIGH">Alta</option>
-              <option value="MEDIUM">Média</option>
-              <option value="LOW">Baixa</option>
-            </FilterSelect>
-
-            <FilterSelect value={filters.contactFilter} onChange={(v) => updateFilter("contactFilter", v)}>
-              <option value="ALL">Todos os contatos</option>
-              {contacts.map((contact) => (
-                <option key={contact.id} value={contact.id}>{contact.name}</option>
-              ))}
-            </FilterSelect>
-
-            <FilterSelect value={filters.responsibleFilter} onChange={(v) => updateFilter("responsibleFilter", v)}>
-              <option value="ALL">Todos responsáveis</option>
-              {users.map((user) => {
-                const label = user.name || user.email;
-                return (
-                  <option key={user.id} value={user.id}>
-                    {user.id === currentUserId ? `Eu (${label})` : label}
-                  </option>
-                );
-              })}
-            </FilterSelect>
-
-            <button
-              onClick={resetFilters}
-              disabled={!hasFilters}
-              className="btn-noir-secondary px-3 py-2 text-xs text-zinc-400"
-            >
-              Limpar
-            </button>
+            <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-emerald-300">Briefing operacional</h2>
+                  <p className="mt-1 text-sm text-emerald-100/70">
+                    {tasks.filter((t) => isOverdue(t.dueAt, t.status)).length > 0
+                      ? `Comece pelas ${tasks.filter((t) => isOverdue(t.dueAt, t.status)).length} tarefa(s) atrasada(s). Elas são o maior risco comercial agora.`
+                      : tasks.filter((task) => task.status !== "DONE" && isDueToday(task.dueAt)).length > 0
+                        ? `Seu foco do dia são ${tasks.filter((task) => task.status !== "DONE" && isDueToday(task.dueAt)).length} tarefa(s) com prazo para hoje.`
+                        : tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length > 0
+                          ? `Há ${tasks.filter((task) => task.status !== "DONE" && !task.dueAt).length} tarefa(s) sem prazo. Defina datas para evitar perda de controle.`
+                          : "Operação em dia. Use a pipeline para identificar leads sem próxima ação."}
+                  </p>
+                </div>
+                <button
+                  onClick={() => { updateFilter("statusFilter", "OPEN"); updateFilter("searchTerm", ""); }}
+                  className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs font-bold text-emerald-200 transition-colors hover:bg-emerald-500/20"
+                >
+                  Revisar fila
+                </button>
+              </div>
+            </section>
           </div>
+        )}
 
-          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-            <FilterSelect value={filters.productFilter} onChange={(v) => updateFilter("productFilter", v)}>
-              <option value="ALL">Todos os produtos</option>
-              <option value="NONE">Sem produto</option>
-              {productOptions.map((product) => (
-                <option key={product} value={product}>{product}</option>
-              ))}
-            </FilterSelect>
-
-            <FilterSelect value={filters.stageFilter} onChange={(v) => updateFilter("stageFilter", v)}>
-              <option value="ALL">Todos os estágios</option>
-              {stageOptions.map((stage) => (
-                <option key={stage} value={stage}>{stage}</option>
-              ))}
-            </FilterSelect>
+        {/* Compact Search & Filter Bar */}
+        <section className="flex items-center rounded-xl border border-white/10 bg-white/[0.02] p-1 shadow-sm focus-within:border-white/20 focus-within:bg-white/[0.04] transition-all">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+            <input
+              value={filters.searchTerm}
+              onChange={(event) => updateFilter("searchTerm", event.target.value)}
+              placeholder="Buscar tarefa, contato, produto..."
+              className="w-full bg-transparent py-2.5 pl-10 pr-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </div>
+          <div className="flex items-center gap-1 border-l border-white/10 pl-2 pr-1">
+            <button
+              onClick={() => setShowFilterSidebar(true)}
+              className={`flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${
+                hasFilters ? "bg-emerald-500/10 text-emerald-400" : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+              }`}
+            >
+              <Filter className="h-4 w-4" />
+              <span className="hidden sm:inline">Filtros</span>
+              {hasFilters && (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] text-emerald-300">
+                  <CheckCircle2 className="h-3 w-3" />
+                </span>
+              )}
+            </button>
+            {hasFilters && (
+              <button onClick={resetFilters} className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 hover:bg-white/5 hover:text-zinc-300" title="Limpar filtros">
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </section>
 
@@ -541,8 +500,124 @@ export default function TasksPage() {
           defaultContactId={modalContactId}
         />
 
+        {/* --- Painel Lateral (Drawer) de Filtros --- */}
+        {showFilterSidebar && (
+          <div 
+            className="modal-overlay fixed inset-0 z-[100] flex justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setShowFilterSidebar(false)}
+          >
+            <div 
+              className="flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0c0c0e] shadow-2xl animate-in slide-in-from-right duration-300"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-white/5 p-5">
+                <h3 className="flex items-center gap-2 font-bold text-zinc-100">
+                  <Filter className="h-4 w-4" /> Filtros Avançados
+                </h3>
+                <button onClick={() => setShowFilterSidebar(false)} className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-white/5 hover:text-white">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 space-y-5 overflow-y-auto p-5">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Status</label>
+                  <FilterSelect value={filters.statusFilter} onChange={(v) => updateFilter("statusFilter", v)}>
+                    <option value="ALL">Todos os status</option>
+                    <option value="OPEN">Abertas</option>
+                    <option value="DONE">Concluídas</option>
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Tipo de Tarefa</label>
+                  <FilterSelect value={filters.typeFilter} onChange={(v) => updateFilter("typeFilter", v)}>
+                    <option value="ALL">Todos os tipos</option>
+                    {Object.entries(typeLabels).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Prioridade</label>
+                  <FilterSelect value={filters.priorityFilter} onChange={(v) => updateFilter("priorityFilter", v)}>
+                    <option value="ALL">Todas prioridades</option>
+                    <option value="URGENT">Urgente</option>
+                    <option value="HIGH">Alta</option>
+                    <option value="MEDIUM">Média</option>
+                    <option value="LOW">Baixa</option>
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Contato (Lead)</label>
+                  <FilterSelect value={filters.contactFilter} onChange={(v) => updateFilter("contactFilter", v)}>
+                    <option value="ALL">Todos os contatos</option>
+                    {contacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>{contact.name}</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Responsável</label>
+                  <FilterSelect value={filters.responsibleFilter} onChange={(v) => updateFilter("responsibleFilter", v)}>
+                    <option value="ALL">Todos responsáveis</option>
+                    {users.map((user) => {
+                      const label = user.name || user.email;
+                      return (
+                        <option key={user.id} value={user.id}>
+                          {user.id === currentUserId ? `Eu (${label})` : label}
+                        </option>
+                      );
+                    })}
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Produto</label>
+                  <FilterSelect value={filters.productFilter} onChange={(v) => updateFilter("productFilter", v)}>
+                    <option value="ALL">Todos os produtos</option>
+                    <option value="NONE">Sem produto</option>
+                    {productOptions.map((product) => (
+                      <option key={product} value={product}>{product}</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Estágio do Funil</label>
+                  <FilterSelect value={filters.stageFilter} onChange={(v) => updateFilter("stageFilter", v)}>
+                    <option value="ALL">Todos os estágios</option>
+                    {stageOptions.map((stage) => (
+                      <option key={stage} value={stage}>{stage}</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+              </div>
+
+              <div className="flex gap-3 border-t border-white/5 bg-white/[0.02] p-5">
+                <button
+                  onClick={() => { resetFilters(); setShowFilterSidebar(false); }}
+                  disabled={!hasFilters}
+                  className="btn-noir-secondary flex-1 disabled:opacity-50"
+                >
+                  Limpar
+                </button>
+                <button
+                  onClick={() => setShowFilterSidebar(false)}
+                  className="btn-noir flex-1"
+                >
+                  Visualizar Resultados
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {deletingTask && (
-          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="modal-overlay fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0c0c0e] p-6 shadow-2xl">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
@@ -687,11 +762,17 @@ function TaskCard({
   const chatHref = task.conversationId ? `/conversations?conversationId=${task.conversationId}` : `/conversations?contactId=${task.contactId}`;
 
   return (
-    <div className={`group surface-noir-muted p-4 transition-colors hover:border-white/10 ${isDone ? "opacity-55" : ""}`}>
+    <div 
+      onClick={onEdit}
+      className={`group surface-noir-muted p-4 transition-colors hover:border-white/10 cursor-pointer ${isDone ? "opacity-55" : ""}`}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
         <div className="flex flex-1 items-start gap-4 min-w-0">
           <button
-            onClick={onToggle}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
             className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
               isDone ? "border-emerald-500 bg-emerald-500/20" : "border-zinc-600 hover:border-zinc-300"
             }`}
@@ -731,6 +812,7 @@ function TaskCard({
                 <input
                   type="datetime-local"
                   defaultValue={formatDateTimeLocal(task.dueAt)}
+                  onClick={(e) => e.stopPropagation()}
                   onBlur={(event) => {
                     const current = formatDateTimeLocal(task.dueAt);
                     if (event.target.value !== current) onReschedule(event.target.value);
@@ -765,13 +847,19 @@ function TaskCard({
 
         <div className="flex shrink-0 items-center gap-2 lg:pt-1">
           <button
-            onClick={onEdit}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
             className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-400 opacity-0 transition-all hover:bg-white/10 hover:text-white group-hover:opacity-100"
           >
             Editar
           </button>
           <button
-            onClick={onDelete}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
             className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-red-400 opacity-0 transition-all hover:bg-red-500/10 group-hover:opacity-100"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -779,6 +867,7 @@ function TaskCard({
           {task.contactId && (
             <Link
               href={chatHref}
+              onClick={(e) => e.stopPropagation()}
               className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
             >
               <MessageSquare className="h-3.5 w-3.5" />
@@ -788,6 +877,7 @@ function TaskCard({
           {task.contactId && task.isLead && (
             <Link
               href={`/leads?leadId=${task.contactId}`}
+              onClick={(e) => e.stopPropagation()}
               className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
             >
               Pipeline

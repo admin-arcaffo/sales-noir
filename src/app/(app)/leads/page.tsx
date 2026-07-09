@@ -1,11 +1,15 @@
 "use client";
 
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { ArrowUpRight, Filter, MessageSquare, Phone, Save, Search, Tag, Users, Edit, X, Wand2, Mail, Building, LayoutTemplate, Briefcase, TrendingUp, AlertTriangle, Settings, Plus, Trash2, Lock, User, ChevronDown, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowUpRight, Filter, MessageSquare, Phone, Save, Search, Tag, Users, Edit, X, Wand2, Mail, Building, LayoutTemplate, Briefcase, TrendingUp, AlertTriangle, Settings, Plus, Trash2, Lock, User, ChevronDown, ChevronRight, ChevronLeft, Archive, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { temperatureBadgeClasses } from "@/components/ui/noir";
+import { useFloatingChat } from "@/context/FloatingChatContext";
 import { 
+  getConversations,
   getLeads, 
   updateConversationStage, 
   updateConversationTemperature,
@@ -32,7 +36,12 @@ import {
   getOrganizationUsers,
   getPipelineDashboardData,
   createLead,
-  deleteLead
+  deleteLead,
+  archiveLead,
+  unarchiveLead,
+  getArchivedLeads,
+  getTasks,
+  type TaskData
 } from "@/actions/crm";
 
 const MeetingModal = lazy(() => import("@/app/(app)/_components/MeetingModal").then((module) => ({ default: module.MeetingModal })));
@@ -109,19 +118,61 @@ const STAGE_COLORS = [
 
 export default function LeadsPage() {
   const { showToast } = useToast();
+  const router = useRouter();
+  const floatingChat = useFloatingChat();
   const [leads, setLeads] = useState<LeadData[]>([]);
+  const [archivedLeads, setArchivedLeads] = useState<LeadData[]>([]);
+  const [viewMode, setViewMode] = useState<"KANBAN" | "ARCHIVE">("KANBAN");
   const [pipelineStages, setPipelineStages] = useState<PipelineStageData[]>([]);
   const [products, setProducts] = useState<ProductData[]>([]);
   const [organizationUsers, setOrganizationUsers] = useState<OrganizationUser[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [temperatureFilter, setTemperatureFilter] = useState<string>("ALL");
-  const [ownershipFilter, setOwnershipFilter] = useState<"ALL" | "MINE">("ALL");
+  const [ownershipFilter, setOwnershipFilter] = useState<"ALL" | "MINE">("MINE");
   const [userFilter, setUserFilter] = useState("ALL");
   const [productFilter, setProductFilter] = useState("ALL");
   const [originFilter, setOriginFilter] = useState("ALL");
   const [quickView, setQuickView] = useState("ALL");
   const [showFilters, setShowFilters] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("pipeline:filters");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.temperatureFilter !== undefined) setTemperatureFilter(parsed.temperatureFilter);
+        if (parsed.ownershipFilter !== undefined) setOwnershipFilter(parsed.ownershipFilter);
+        if (parsed.userFilter !== undefined) setUserFilter(parsed.userFilter);
+        if (parsed.productFilter !== undefined) setProductFilter(parsed.productFilter);
+        if (parsed.originFilter !== undefined) setOriginFilter(parsed.originFilter);
+        if (parsed.quickView !== undefined) setQuickView(parsed.quickView);
+        if (parsed.showFilters !== undefined) setShowFilters(parsed.showFilters);
+      }
+    } catch (e) {
+      console.error("Failed to parse pipeline filters from storage", e);
+    }
+    setIsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    try {
+      const filtersToSave = {
+        temperatureFilter,
+        ownershipFilter,
+        userFilter,
+        productFilter,
+        originFilter,
+        quickView,
+        showFilters,
+      };
+      localStorage.setItem("pipeline:filters", JSON.stringify(filtersToSave));
+    } catch (e) {
+      console.error("Failed to save pipeline filters", e);
+    }
+  }, [temperatureFilter, ownershipFilter, userFilter, productFilter, originFilter, quickView, showFilters, isHydrated]);
   
   // Create Lead Modal states
   const [isCreateLeadModalOpen, setIsCreateLeadModalOpen] = useState(false);
@@ -136,6 +187,8 @@ export default function LeadsPage() {
   const [newLeadStage, setNewLeadStage] = useState("");
   const [isSubmittingLead, setIsSubmittingLead] = useState(false);
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
+  const [leadTasks, setLeadTasks] = useState<TaskData[]>([]);
+  const [editingTask, setEditingTask] = useState<TaskData | null>(null);
   const [taskLead, setTaskLead] = useState<TaskLeadDraft | null>(null);
   const hasAppliedLeadParamRef = useRef(false);
   const [isEditingLead, setIsEditingLead] = useState(false);
@@ -147,6 +200,7 @@ export default function LeadsPage() {
   const [pendingClosedDeal, setPendingClosedDeal] = useState<{ leadId: string; newStage: string; newStageLabel: string } | null>(null);
   const [inviteMasterclassLeadId, setInviteMasterclassLeadId] = useState<string | null>(null);
   const [pendingProductId, setPendingProductId] = useState<string>("");
+  const [openingFloatingLeadId, setOpeningFloatingLeadId] = useState<string | null>(null);
 
   // Meeting Scheduling State
   const [meetingModalOpen, setMeetingModalOpen] = useState(false);
@@ -163,7 +217,7 @@ export default function LeadsPage() {
 
   // Configuration Modal States
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [configTab, setConfigTab] = useState<"products" | "origins" | "stages">("products");
+  const [configTab, setConfigTab] = useState<"products" | "origins" | "stages" | "archive">("products");
   const [leadOrigins, setLeadOrigins] = useState<{ id: string; name: string }[]>([]);
   
   // Stages configuration states
@@ -190,6 +244,63 @@ export default function LeadsPage() {
   const [editingOriginId, setEditingOriginId] = useState<string | null>(null);
   const [editingOriginName, setEditingOriginName] = useState("");
 
+  useEscapeKey(!!selectedLead, () => setSelectedLead(null));
+  useEscapeKey(isConfigModalOpen, () => setIsConfigModalOpen(false));
+  useEscapeKey(isCreateLeadModalOpen, () => setIsCreateLeadModalOpen(false));
+  useEscapeKey(!!pendingMove, () => setPendingMove(null));
+  useEscapeKey(!!pendingClosedDeal, () => setPendingClosedDeal(null));
+  useEscapeKey(meetingModalOpen, () => setMeetingModalOpen(false));
+  useEscapeKey(!!confirmDeleteLeadId, () => setConfirmDeleteLeadId(null));
+  useEscapeKey(!!taskLead, () => setTaskLead(null));
+
+  useKeyboardShortcuts({
+    onNew: () => setIsCreateLeadModalOpen(true),
+    onSearch: () => document.querySelector<HTMLInputElement>('input[placeholder*="Buscar"]')?.focus()
+  });
+
+  const getLeadConversationUrl = (lead: LeadData) => (
+    lead.conversationId
+      ? `/conversations?conversationId=${encodeURIComponent(lead.conversationId)}`
+      : `/conversations?contactId=${encodeURIComponent(lead.id)}`
+  );
+
+  const handleOpenLeadConversation = async (lead: LeadData) => {
+    const fallbackUrl = getLeadConversationUrl(lead);
+
+    if (!lead.conversationId || !floatingChat.isFloatingChatEnabled) {
+      router.push(fallbackUrl);
+      return;
+    }
+
+    if (openingFloatingLeadId === lead.id) return;
+
+    setOpeningFloatingLeadId(lead.id);
+    try {
+      const result = await getConversations(undefined, "all", {
+        conversationId: lead.conversationId,
+        messageLimit: 15,
+        includeMediaUrls: false,
+        includeAnalysis: false,
+        includeConnections: false,
+        runMaintenance: false,
+        assignedToMe: false,
+      });
+
+      const opened = result.conversations.length > 0
+        ? floatingChat.openFloatingConversation(lead.conversationId, result.conversations)
+        : false;
+
+      if (!opened) {
+        router.push(fallbackUrl);
+      }
+    } catch (error) {
+      console.error("Failed to open lead conversation in floating chat:", error);
+      router.push(fallbackUrl);
+    } finally {
+      setOpeningFloatingLeadId(null);
+    }
+  };
+
   const refreshData = () => {
     getPipelineDashboardData()
       .then((data) => {
@@ -210,6 +321,18 @@ export default function LeadsPage() {
       setCurrentUserRole(info?.role || null);
     });
   }, []);
+
+  const loadArchivedLeads = () => {
+    getArchivedLeads()
+      .then(setArchivedLeads)
+      .catch((error) => console.error("Failed to load archived leads:", error));
+  };
+
+  useEffect(() => {
+    if (isConfigModalOpen) {
+      loadArchivedLeads();
+    }
+  }, [isConfigModalOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined" || hasAppliedLeadParamRef.current || leads.length === 0) return;
@@ -235,7 +358,12 @@ export default function LeadsPage() {
 
   const isHotStale = (lead: LeadData) => lead.temperature === "HOT" && getDaysSinceLastContact(lead) >= 1;
   const hasNoNextAction = (lead: LeadData) => lead.openTasksCount === 0;
-  const isProposalWithoutFollowUp = (lead: LeadData) => lead.stage.toLowerCase().includes("proposta") && lead.openTasksCount === 0;
+  const isProposalWithoutFollowUp = (lead: LeadData) => {
+    const stage = lead.stageKey || "";
+    const isProposalOrNegotiation = stage === "APRESENTACAO_PROPOSTA" || stage === "NEGOCIACAO";
+    const hasFollowUp = lead.nextTask && lead.nextTask.type === "FOLLOW_UP";
+    return isProposalOrNegotiation && !hasFollowUp;
+  };
 
   const filteredLeads = leads.filter((lead) => {
     const haystack = [
@@ -441,6 +569,8 @@ export default function LeadsPage() {
         productId: selectedLead.productId || undefined,
         notes: selectedLead.notes || undefined,
         origin: selectedLead.origin || undefined,
+        assignedUserId: selectedLead.assignedUserId || undefined,
+        closerId: selectedLead.closerId || undefined,
       });
       // Update local state
       setLeads(current => current.map(l => l.id === selectedLead.id ? selectedLead : l));
@@ -452,12 +582,16 @@ export default function LeadsPage() {
     }
   };
 
-  const handleDeleteLead = async () => {
-    if (!selectedLead) return;
+  const handleDeleteLead = async (targetId?: string) => {
+    const idToDelete = targetId || selectedLead?.id;
+    if (!idToDelete) return;
     try {
-      await deleteLead(selectedLead.id);
-      setLeads((current) => current.filter((l) => l.id !== selectedLead.id));
-      setSelectedLead(null);
+      await deleteLead(idToDelete);
+      setLeads((current) => current.filter((l) => l.id !== idToDelete));
+      setArchivedLeads((current) => current.filter((l) => l.id !== idToDelete));
+      if (selectedLead?.id === idToDelete) {
+        setSelectedLead(null);
+      }
       setConfirmDeleteLeadId(null);
       showToast("Lead excluído.", "success");
     } catch (error) {
@@ -466,6 +600,14 @@ export default function LeadsPage() {
       setConfirmDeleteLeadId(null);
     }
   };
+
+  useEffect(() => {
+    if (selectedLead) {
+      getTasks({ contactId: selectedLead.id }).then(setLeadTasks).catch(console.error);
+    } else {
+      setLeadTasks([]);
+    }
+  }, [selectedLead]);
 
   const toggleCollapseStage = (stageId: string) => {
     setCollapsedStages((prev) => {
@@ -714,176 +856,188 @@ export default function LeadsPage() {
 
       {/* Kanban Board Area */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-6 bg-[#040406]">
+        {/* Kanban Board */}
         <div className="flex h-full gap-4 pb-4 min-w-max">
-          {activeStages.map((column) => {
-            const columnLeads = filteredLeads.filter(l => l.stageKey === column.id);
-            const columnSum = columnLeads.reduce((sum, l) => sum + (l.totalProductValue || 0), 0);
-            const formattedSum = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(columnSum);
-            
-            return (
-              <div 
-                key={column.id} 
-                className={`surface-noir flex flex-col shrink-0 h-full max-h-full p-3 transition-all duration-200 overflow-hidden ${
-                  collapsedStages.has(column.id) ? "w-14" : "w-[320px]"
-                }`}
-                onDragOver={handleDragOver}
-                onDrop={(e) => void handleDrop(e, column.id)}
-              >
-                <div className={`flex items-center gap-2 mb-4 px-1 ${collapsedStages.has(column.id) ? "flex-col" : "justify-between"}`}>
-                  <div className={`flex items-center gap-2 ${collapsedStages.has(column.id) ? "flex-col" : ""}`}>
-                    <button
-                      onClick={() => toggleCollapseStage(column.id)}
-                      className="text-zinc-600 hover:text-zinc-300 transition-colors shrink-0"
-                    >
-                      {collapsedStages.has(column.id) ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                    </button>
-                    <span className={`w-1.5 h-1.5 rounded-full ${column.color} shrink-0`} />
-                    <h3 className={`text-[10px] font-bold text-zinc-300 uppercase tracking-wider ${collapsedStages.has(column.id) ? "hidden" : ""}`}>{column.title}</h3>
-                  </div>
-                  <div className={`flex items-center gap-1.5 ${collapsedStages.has(column.id) ? "flex-col" : ""}`}>
-                    {columnSum > 0 && (
-                      <span className={`font-mono text-[9px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold ${collapsedStages.has(column.id) ? "hidden" : ""}`}>
-                        {formattedSum}
-                      </span>
-                    )}
-                    <span className="font-mono text-[9px] text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-850">
-                      {columnLeads.length}
-                    </span>
-                  </div>
-                </div>
-
-                <div className={`flex-1 overflow-y-auto space-y-3 pb-8 px-1 custom-scrollbar transition-colors ${isDragging ? 'bg-white/[0.01] rounded-xl border border-dashed border-white/10' : ''} ${collapsedStages.has(column.id) ? 'hidden' : ''}`}>
-                  {columnLeads.map((lead) => (
-                    <div
-                      key={lead.id}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, lead.id)}
-                      onDragEnd={handleDragEnd}
-                      onClick={() => setSelectedLead(lead)}
-                      className="group relative cursor-pointer rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 transition-all hover:border-white/10 hover:bg-white/[0.05]"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h4 className="font-semibold text-sm text-zinc-200 group-hover:text-white transition-colors">{lead.name}</h4>
-                          <p className="text-[11px] text-zinc-500 truncate mt-0.5 max-w-[180px]">{lead.company || lead.phone}</p>
-                          {lead.assignedUserName && (
-                            <p className="text-[10px] text-indigo-400/70 mt-0.5 flex items-center gap-1">
-                              <User className="w-3 h-3" /> {lead.assignedUserName}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex gap-1 items-center">
-                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${tempStyles[lead.temperature] || tempStyles.COLD}`}>
-                            {lead.temperature}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      {lead.totalProductValueFormatted && (
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 mb-3 bg-emerald-500/10 px-2 py-1.5 rounded-md border border-emerald-500/20 inline-flex">
-                          <span>{lead.totalProductValueFormatted}</span>
-                        </div>
+            {activeStages.map((column) => {
+              const columnLeads = filteredLeads.filter(l => l.stageKey === column.id);
+              const columnSum = columnLeads.reduce((sum, l) => sum + (l.totalProductValue || 0), 0);
+              const formattedSum = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(columnSum);
+              
+              return (
+                <div 
+                  key={column.id} 
+                  className={`surface-noir flex flex-col shrink-0 h-full max-h-full p-3 transition-all duration-200 overflow-hidden ${
+                    collapsedStages.has(column.id) ? "w-14" : "w-[320px]"
+                  }`}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => void handleDrop(e, column.id)}
+                >
+                  <div className={`flex items-center gap-2 mb-4 px-1 ${collapsedStages.has(column.id) ? "flex-col" : "justify-between"}`}>
+                    <div className={`flex items-center gap-2 ${collapsedStages.has(column.id) ? "flex-col" : ""}`}>
+                      <button
+                        onClick={() => toggleCollapseStage(column.id)}
+                        className="text-zinc-600 hover:text-zinc-300 transition-colors shrink-0"
+                      >
+                        {collapsedStages.has(column.id) ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
+                      </button>
+                      <span className={`w-1.5 h-1.5 rounded-full ${column.color} shrink-0`} />
+                      <h3 className={`text-[10px] font-bold text-zinc-300 uppercase tracking-wider ${collapsedStages.has(column.id) ? "hidden" : ""}`}>{column.title}</h3>
+                    </div>
+                    <div className={`flex items-center gap-1.5 ${collapsedStages.has(column.id) ? "flex-col" : ""}`}>
+                      {columnSum > 0 && (
+                        <span className={`font-mono text-[9px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold ${collapsedStages.has(column.id) ? "hidden" : ""}`}>
+                          {formattedSum}
+                        </span>
                       )}
+                      <span className="font-mono text-[9px] text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-850">
+                        {columnLeads.length}
+                      </span>
+                    </div>
+                  </div>
 
-                      {lead.closedDeal && (
-                        <div className="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.08] p-2 space-y-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
-                              <Briefcase className="w-3 h-3" /> Venda despachada
-                            </span>
-                            <span className="text-[10px] font-mono text-emerald-200">{formatMoney(lead.closedDeal.totalValue)}</span>
-                          </div>
-                          <div className="text-[10px] text-zinc-400 flex flex-col gap-0.5">
-                            <span className="truncate">{lead.closedDeal.installmentCount || 1}x | {lead.closedDeal.paymentMethod || "PIX"} | Venc: {formatShortDate(lead.closedDeal.firstPaymentDate)}</span>
-                            {lead.closedDeal.hasSignal && (
-                              <span className="text-emerald-400">Sinal: {formatMoney(lead.closedDeal.signalValue)}</span>
+                  <div className={`flex-1 overflow-y-auto space-y-3 pb-8 px-1 custom-scrollbar transition-colors ${isDragging ? 'bg-white/[0.01] rounded-xl border border-dashed border-white/10' : ''} ${collapsedStages.has(column.id) ? 'hidden' : ''}`}>
+                    {columnLeads.map((lead) => (
+                      <div
+                        key={lead.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, lead.id)}
+                        onDragEnd={handleDragEnd}
+                        onClick={() => setSelectedLead(lead)}
+                        className="group relative cursor-pointer rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 transition-all hover:border-white/10 hover:bg-white/[0.05]"
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h4 className="font-semibold text-sm text-zinc-200 group-hover:text-white transition-colors">{lead.name}</h4>
+                            <p className="text-[11px] text-zinc-500 truncate mt-0.5 max-w-[180px]">{lead.company || lead.phone}</p>
+                            {lead.assignedUserName && (
+                              <p className="text-[10px] text-indigo-400/70 mt-0.5 flex items-center gap-1">
+                                <User className="w-3 h-3" /> {lead.assignedUserName}
+                              </p>
                             )}
                           </div>
-                          <div className="text-[10px] text-zinc-500">Despacho: {formatDateTime(lead.closedDeal.closedAt)}</div>
-                          {lead.closedDeal.projectDuration && (
-                            <div className="text-[10px] text-zinc-500">Projeto: {lead.closedDeal.projectDuration}</div>
+                          <div className="flex gap-1 items-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm("Excluir este card apagará o lead e seu histórico. Tem certeza?")) {
+                                  handleDeleteLead(lead.id);
+                                }
+                              }}
+                              className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-red-500/10"
+                              title="Excluir lead"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${tempStyles[lead.temperature] || tempStyles.COLD}`}>
+                              {lead.temperature}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        {lead.totalProductValueFormatted && (
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 mb-3 bg-emerald-500/10 px-2 py-1.5 rounded-md border border-emerald-500/20 inline-flex">
+                            <span>{lead.totalProductValueFormatted}</span>
+                          </div>
+                        )}
+
+                        {lead.closedDeal && (
+                          <div className="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.08] p-2 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                                <Briefcase className="w-3 h-3" /> Venda despachada
+                              </span>
+                              <span className="text-[10px] font-mono text-emerald-200">{formatMoney(lead.closedDeal.totalValue)}</span>
+                            </div>
+                            <div className="text-[10px] text-zinc-400 flex flex-col gap-0.5">
+                              <span className="truncate">{lead.closedDeal.installmentCount || 1}x | {lead.closedDeal.paymentMethod || "PIX"} | Venc: {formatShortDate(lead.closedDeal.firstPaymentDate)}</span>
+                              {lead.closedDeal.hasSignal && (
+                                <span className="text-emerald-400">Sinal: {formatMoney(lead.closedDeal.signalValue)}</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-zinc-500">Despacho: {formatDateTime(lead.closedDeal.closedAt)}</div>
+                            {lead.closedDeal.projectDuration && (
+                              <div className="text-[10px] text-zinc-500">Projeto: {lead.closedDeal.projectDuration}</div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          {lead.overdueTasksCount > 0 && (
+                            <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-300 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3 h-3" />
+                              {lead.overdueTasksCount} tarefa{lead.overdueTasksCount > 1 ? "s" : ""} vencida{lead.overdueTasksCount > 1 ? "s" : ""}
+                            </div>
+                          )}
+
+                          {lead.nextTask && (
+                            <div className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-400">
+                              <span className="font-bold text-zinc-300">Próxima:</span> {lead.nextTask.title} • {lead.nextTask.due}
+                            </div>
+                          )}
+
+                          {(lead.latestRiskLevel === "ALTO" || lead.latestUrgency === "CRITICA") && (
+                            <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-300">
+                              IA: {lead.latestUrgency === "CRITICA" ? "urgência crítica" : "risco alto"}
+                            </div>
                           )}
                         </div>
-                      )}
 
-                      <div className="space-y-2">
-                        {lead.overdueTasksCount > 0 && (
-                          <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-300 flex items-center gap-1.5">
-                            <AlertTriangle className="w-3 h-3" />
-                            {lead.overdueTasksCount} tarefa{lead.overdueTasksCount > 1 ? "s" : ""} vencida{lead.overdueTasksCount > 1 ? "s" : ""}
+                        <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
+                          <div className="flex items-center gap-2 text-zinc-500 text-[11px]">
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>{lead.lastContact || "Sem contato"}</span>
                           </div>
-                        )}
-
-                        {!lead.nextTask && (
-                          <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-300">
-                            Sem próxima ação definida
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setTaskLead({ lead });
+                              }}
+                              className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center hover:bg-emerald-500/20 transition-colors border border-emerald-500/20 text-emerald-300"
+                              title="Criar tarefa para este lead"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          {(lead.assignedUserId === currentUserId || currentUserRole === 'owner') ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleOpenLeadConversation(lead);
+                              }}
+                              disabled={openingFloatingLeadId === lead.id}
+                              className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10 text-zinc-400 hover:text-white disabled:opacity-60 disabled:cursor-wait"
+                              title={floatingChat.isFloatingChatEnabled ? "Abrir chat flutuante" : "Abrir Chat"}
+                            >
+                              <ArrowUpRight className={`w-4 h-4 ${openingFloatingLeadId === lead.id ? "animate-pulse" : ""}`} />
+                            </button>
+                          ) : (
+                            <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center border border-white/10 text-zinc-600 cursor-not-allowed" title="Conversa de outro membro">
+                              <Lock className="w-3.5 h-3.5" />
+                            </div>
+                          )}
                           </div>
-                        )}
-
-                        {lead.nextTask && (
-                          <div className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-zinc-400">
-                            <span className="font-bold text-zinc-300">Próxima:</span> {lead.nextTask.title} • {lead.nextTask.due}
-                          </div>
-                        )}
-
-                        {(lead.latestRiskLevel === "ALTO" || lead.latestUrgency === "CRITICA") && (
-                          <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-300">
-                            IA: {lead.latestUrgency === "CRITICA" ? "urgência crítica" : "risco alto"}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
-                        <div className="flex items-center gap-2 text-zinc-500 text-[11px]">
-                          <MessageSquare className="w-3.5 h-3.5" />
-                          <span>{lead.lastContact || "Sem contato"}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setTaskLead({ lead });
-                            }}
-                            className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center hover:bg-emerald-500/20 transition-colors border border-emerald-500/20 text-emerald-300"
-                            title="Criar tarefa para este lead"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        {(lead.assignedUserId === currentUserId || currentUserRole === 'owner') ? (
-                          <Link
-                            href={`/conversations`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10 text-zinc-400 hover:text-white"
-                            title="Abrir Chat"
-                          >
-                            <ArrowUpRight className="w-4 h-4" />
-                          </Link>
-                        ) : (
-                          <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center border border-white/10 text-zinc-600 cursor-not-allowed" title="Conversa de outro membro">
-                            <Lock className="w-3.5 h-3.5" />
-                          </div>
-                        )}
                         </div>
                       </div>
-                    </div>
-                  ))}
-                  
-                  {columnLeads.length === 0 && (
-                    <div className="h-24 rounded-xl border border-dashed border-white/10 flex items-center justify-center text-zinc-600 text-[11px]">
-                      Arraste leads para cá
-                    </div>
-                  )}
+                    ))}
+                    
+                    {columnLeads.length === 0 && (
+                      <div className="h-24 rounded-xl border border-dashed border-white/10 flex items-center justify-center text-zinc-600 text-[11px]">
+                        Arraste leads para cá
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
       </div>
 
-      {/* Lead Card Modal */}
+      {/* Edit Lead Modal */}
       {selectedLead && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="surface-noir-muted flex max-h-[90vh] w-full max-w-3xl flex-col shadow-2xl">
             <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0">
               <h3 className="font-bold text-lg flex items-center gap-2">
@@ -972,6 +1126,35 @@ export default function LeadsPage() {
                         <option key={o.id} value={o.name}>{o.name}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1.5 block flex items-center gap-1"><User className="w-3 h-3" /> Responsável</label>
+                      <select 
+                        value={selectedLead.assignedUserId || ""}
+                        onChange={(e) => setSelectedLead({ ...selectedLead, assignedUserId: e.target.value || null })}
+                        className="select-noir w-full"
+                      >
+                        <option value="">Sem responsável</option>
+                        {organizationUsers.map(u => (
+                          <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1.5 block flex items-center gap-1"><User className="w-3 h-3" /> Closer</label>
+                      <select 
+                        value={selectedLead.closerId || ""}
+                        onChange={(e) => setSelectedLead({ ...selectedLead, closerId: e.target.value || null })}
+                        className="select-noir w-full"
+                      >
+                        <option value="">Sem closer</option>
+                        {organizationUsers.map(u => (
+                          <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <div>
@@ -1089,6 +1272,50 @@ export default function LeadsPage() {
 
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <h4 className="text-sm font-semibold text-zinc-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-4 h-4" /> Tarefas Vinculadas
+                  </h4>
+                  <button
+                    onClick={() => setTaskLead({ lead: selectedLead })}
+                    className="btn-noir-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Nova Tarefa
+                  </button>
+                </div>
+
+                {leadTasks.length === 0 ? (
+                  <p className="text-xs text-zinc-500">Nenhuma tarefa vinculada a este lead.</p>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                    {leadTasks.map(task => (
+                      <div
+                        key={task.id}
+                        onClick={() => setEditingTask(task)}
+                        className="flex items-center justify-between p-3 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors cursor-pointer group"
+                      >
+                        <div>
+                          <h5 className={`font-semibold text-sm ${task.status === 'DONE' ? 'line-through text-zinc-500' : 'text-zinc-200 group-hover:text-white'}`}>
+                            {task.title}
+                          </h5>
+                          <p className="text-xs text-zinc-500">{task.due ? task.due : "Sem data"} • {task.type || "Outra"}</p>
+                        </div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${
+                          task.status === 'DONE' ? 'bg-zinc-500/10 text-zinc-400' :
+                          task.priority === 'URGENT' ? 'bg-red-500/10 text-red-400' :
+                          task.priority === 'HIGH' ? 'bg-amber-500/10 text-amber-400' :
+                          'bg-blue-500/10 text-blue-400'
+                        }`}>
+                          {task.status === 'DONE' ? 'Concluída' : task.priority === 'URGENT' ? 'Urgente' : task.priority === 'HIGH' ? 'Alta' : task.priority === 'MEDIUM' ? 'Média' : 'Baixa'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
                   <h4 className="text-sm font-semibold text-zinc-400 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Maiores Desafios Atuais</h4>
                   <button 
                     onClick={() => handleSuggestChallenges(selectedLead.id)}
@@ -1143,6 +1370,41 @@ export default function LeadsPage() {
                     className="px-3 py-2.5 rounded-lg text-xs font-semibold text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-1.5"
                   >
                     <Trash2 className="w-3.5 h-3.5" /> Excluir
+                  </button>
+                )}
+                
+                {selectedLead.isArchived ? (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await unarchiveLead(selectedLead.id);
+                        showToast("Lead desarquivado com sucesso.", "success");
+                        setSelectedLead(null);
+                        loadArchivedLeads();
+                        refreshData();
+                      } catch (e) {
+                        showToast("Falha ao desarquivar.", "error");
+                      }
+                    }}
+                    className="px-3 py-2.5 rounded-lg text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors flex items-center gap-1.5"
+                  >
+                    Desarquivar
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await archiveLead(selectedLead.id);
+                        showToast("Lead arquivado com sucesso.", "success");
+                        setSelectedLead(null);
+                        refreshData();
+                      } catch (e) {
+                        showToast("Falha ao arquivar.", "error");
+                      }
+                    }}
+                    className="px-3 py-2.5 rounded-lg text-xs font-semibold text-zinc-400 hover:bg-zinc-500/10 transition-colors flex items-center gap-1.5"
+                  >
+                    Arquivar
                   </button>
                 )}
               </div>
@@ -1216,26 +1478,46 @@ export default function LeadsPage() {
         </Suspense>
       )}
 
-      {taskLead && (
+      {(taskLead || editingTask) && (
         <Suspense fallback={null}>
           <TaskModal
-            isOpen={Boolean(taskLead)}
-            onClose={() => setTaskLead(null)}
-            contactId={taskLead?.lead.id || null}
-            contactName={taskLead?.lead.name || ""}
+            isOpen={Boolean(taskLead || editingTask)}
+            onClose={() => {
+              setTaskLead(null);
+              setEditingTask(null);
+              if (selectedLead) {
+                getTasks({ contactId: selectedLead.id }).then(setLeadTasks).catch(console.error);
+              }
+              refreshData();
+            }}
+            task={editingTask}
+            contactId={taskLead?.lead.id || selectedLead?.id || null}
+            contactName={taskLead?.lead.name || selectedLead?.name || ""}
             defaultTitle={taskLead?.title || (taskLead ? `Fazer follow-up com ${taskLead.lead.name}` : "")}
             defaultDescription={taskLead?.description || (taskLead ? `Tarefa criada a partir da pipeline. Estágio atual: ${taskLead.lead.stage}.` : "")}
             defaultType="FOLLOW_UP"
             defaultPriority={taskLead?.priority || (taskLead?.lead.temperature === "HOT" ? "HIGH" : "MEDIUM")}
             defaultSource={taskLead?.source || "MANUAL"}
-            defaultConversationId={taskLead?.lead.conversationId || null}
+            defaultConversationId={taskLead?.lead.conversationId || selectedLead?.conversationId || null}
+            onUpdated={() => {
+              if (selectedLead) {
+                getTasks({ contactId: selectedLead.id }).then(setLeadTasks).catch(console.error);
+              }
+              refreshData();
+            }}
+            onCreated={() => {
+              if (selectedLead) {
+                getTasks({ contactId: selectedLead.id }).then(setLeadTasks).catch(console.error);
+              }
+              refreshData();
+            }}
           />
         </Suspense>
       )}
 
       {/* Product Required Gate Modal */}
       {pendingMove && STAGES_REQUIRING_PRODUCT.includes(pendingMove.newStage) && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="surface-noir-muted w-full max-w-md shadow-2xl">
             <div className="p-6 border-b border-white/5">
               <h3 className="font-bold text-lg flex items-center gap-2 text-amber-400">
@@ -1284,7 +1566,7 @@ export default function LeadsPage() {
 
       {/* Configuration / Pipeline Settings Modal */}
       {isConfigModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="surface-noir-muted flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/[0.02]">
               <div>
@@ -1335,6 +1617,16 @@ export default function LeadsPage() {
                 }`}
               >
                 <LayoutTemplate className="w-4 h-4" /> Estágios do Funil
+              </button>
+              <button
+                onClick={() => setConfigTab("archive")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-all ${
+                  configTab === "archive"
+                    ? "bg-white text-black"
+                    : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
+                }`}
+              >
+                <Archive className="w-4 h-4" /> Arquivo
               </button>
             </div>
 
@@ -1779,6 +2071,50 @@ export default function LeadsPage() {
                   </div>
                 </div>
               )}
+
+              {configTab === "archive" && (
+                <div className="flex-1 overflow-y-auto px-1 pb-4">
+                  <div className="space-y-2">
+                    {archivedLeads.length === 0 ? (
+                      <div className="p-8 text-center text-zinc-500 border border-dashed border-white/10 rounded-xl bg-white/[0.02]">
+                        Nenhum lead arquivado no momento.
+                      </div>
+                    ) : (
+                      archivedLeads.map((lead) => (
+                        <div key={lead.id} className="flex items-center justify-between p-4 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+                          <div>
+                            <h4 className="font-semibold text-zinc-200">{lead.name}</h4>
+                            <p className="text-xs text-zinc-500">{lead.company || lead.phone}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => setSelectedLead(lead)}
+                              className="px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                            >
+                              Visualizar
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  await unarchiveLead(lead.id);
+                                  loadArchivedLeads();
+                                  refreshData();
+                                  showToast("Lead desarquivado com sucesso.", "success");
+                                } catch (e) {
+                                  showToast("Falha ao desarquivar.", "error");
+                                }
+                              }}
+                              className="px-3 py-1.5 text-xs bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors font-semibold"
+                            >
+                              Desarquivar
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="p-6 border-t border-white/5 shrink-0 flex justify-end bg-white/[0.02]">
@@ -1798,7 +2134,7 @@ export default function LeadsPage() {
 
       {/* Stage Deletion Migration Modal */}
       {deletingStageId && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="surface-noir-muted w-full max-w-md shadow-2xl">
             <div className="p-6 border-b border-white/5">
               <h3 className="font-bold text-lg flex items-center gap-2 text-red-400">
@@ -1879,7 +2215,7 @@ export default function LeadsPage() {
 
       {/* === MODAL: CRIAR LEAD === */}
       {isCreateLeadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="surface-noir-muted flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden shadow-2xl">
             <header className="flex shrink-0 items-center justify-between border-b border-white/5 bg-white/[0.02] px-6 py-4">
               <h3 className="font-bold text-base flex items-center gap-2 text-zinc-100">

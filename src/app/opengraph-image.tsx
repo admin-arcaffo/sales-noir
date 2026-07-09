@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og';
 
 export const runtime = 'edge';
 
-export const alt = 'Sales Arcaffo | Intelligence Co-pilot';
+export const alt = 'Dealeto | Intelligence Co-pilot';
 export const size = {
   width: 1200,
   height: 630,
@@ -45,7 +45,7 @@ export default function og() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <span style={{ color: '#ffffff', fontSize: '48px', fontWeight: 800, fontFamily: 'sans-serif', letterSpacing: '-0.02em' }}>
-              Sales Arcaffo
+              Dealeto
             </span>
             <span style={{ color: '#a1a1aa', fontSize: '24px', fontWeight: 500, fontFamily: 'monospace', letterSpacing: '0.1em' }}>
               NOIR SYSTEM

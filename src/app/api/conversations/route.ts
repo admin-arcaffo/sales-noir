@@ -8,6 +8,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const since = searchParams.get('since') || undefined;
     const connectionId = searchParams.get('connectionId') || searchParams.get('connection_id') || undefined;
+    const conversationId = searchParams.get('conversationId') || searchParams.get('conversation_id') || undefined;
     const scope = searchParams.get('scope') || undefined;
     const assignedToMeParam = searchParams.get('assignedToMe');
     const isFloatingScope = scope === 'floating';
@@ -20,6 +21,7 @@ export async function GET(req: Request) {
       includeConnections: !isFloatingScope && !isIncremental,
       runMaintenance: !isFloatingScope && !isIncremental,
       assignedToMe: assignedToMeParam !== null ? assignedToMeParam === 'true' : undefined,
+      conversationId,
     });
 
     return NextResponse.json(result);

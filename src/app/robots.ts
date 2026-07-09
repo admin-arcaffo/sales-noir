@@ -16,6 +16,6 @@ export default function robots(): MetadataRoute.Robots {
         '/tasks/',
       ],
     },
-    sitemap: 'https://sales.arcaffo.com/sitemap.xml',
+    sitemap: 'https://dealeto.arcaffo.com/sitemap.xml',
   };
 }

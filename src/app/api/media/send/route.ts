@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { sendMediaMessage } from "@/actions/crm";
+import { sendConversationMedia } from "@/actions/crm";
+import { normalizeOutboundMediaInput } from "@/lib/outbound-media";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -11,43 +12,6 @@ const MAX_MEDIA_BYTES_BY_TYPE: Record<string, number> = {
   video: Number(process.env.MAX_WHATSAPP_VIDEO_BYTES || 16 * 1024 * 1024),
   document: Number(process.env.MAX_WHATSAPP_DOCUMENT_BYTES || 32 * 1024 * 1024),
 };
-
-function inferMimeType(fileName: string, mimeType: string) {
-  const clean = mimeType && mimeType !== "application/octet-stream" ? mimeType.split(";")[0].trim().toLowerCase() : "";
-  if (clean) return clean;
-
-  const ext = fileName.toLowerCase().split(".").pop();
-  const byExt: Record<string, string> = {
-    pdf: "application/pdf",
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    xls: "application/vnd.ms-excel",
-    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    csv: "text/csv",
-    txt: "text/plain",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    webp: "image/webp",
-    gif: "image/gif",
-    mp3: "audio/mpeg",
-    ogg: "audio/ogg",
-    opus: "audio/ogg",
-    wav: "audio/wav",
-    webm: "audio/webm",
-    mp4: "video/mp4",
-    mov: "video/quicktime",
-    m4a: "audio/mp4",
-  };
-  return (ext && byExt[ext]) || "application/octet-stream";
-}
-
-function inferMediaType(mimeType: string) {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
-  return "document";
-}
 
 function getMaxMediaBytes(mediaType: string) {
   return Math.min(MAX_MEDIA_BYTES_BY_TYPE[mediaType] || MAX_MEDIA_BYTES, MAX_MEDIA_BYTES);
@@ -69,8 +33,13 @@ export async function POST(req: Request) {
     }
 
     const fileName = String(formData.get("fileName") || file.name || "media");
-    const mimetype = inferMimeType(fileName, String(formData.get("mimetype") || file.type || "application/octet-stream"));
-    const mediatype = String(formData.get("mediatype") || inferMediaType(mimetype)).toLowerCase();
+    const normalized = normalizeOutboundMediaInput({
+      fileName,
+      mimetype: String(formData.get("mimetype") || file.type || "application/octet-stream"),
+      mediatype: formData.get("mediatype"),
+    });
+    const mimetype = normalized.mimetype;
+    const mediatype = normalized.mediatype;
     uploadInfo = { conversationId, mediatype, mimetype, fileName, fileSize: file.size };
 
     const maxBytes = getMaxMediaBytes(mediatype);
@@ -84,13 +53,15 @@ export async function POST(req: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    const message = await sendMediaMessage({
+    const message = await sendConversationMedia(
       conversationId,
-      base64: buffer.toString("base64"),
+      buffer.toString("base64"),
       mediatype,
       mimetype,
       fileName,
-    });
+      String(formData.get("caption") || ""),
+      String(formData.get("quotedMessageId") || "")
+    );
 
     return NextResponse.json({ success: true, message });
   } catch (error: any) {

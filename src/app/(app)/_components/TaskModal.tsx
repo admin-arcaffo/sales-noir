@@ -43,6 +43,14 @@ const priorities = [
   { value: "URGENT", label: "Urgente" },
 ];
 
+const toDatetimeLocal = (isoString?: string | null) => {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 export function TaskModal({
   isOpen,
   onClose,
@@ -71,7 +79,7 @@ export function TaskModal({
   const [description, setDescription] = useState(isEditMode ? task!.description || "" : defaultDescription);
   const [type, setType] = useState(isEditMode ? task!.type : defaultType);
   const [priority, setPriority] = useState(isEditMode ? task!.priority : defaultPriority);
-  const [dueAt, setDueAt] = useState(isEditMode ? task!.dueAt?.slice(0, 16) || "" : defaultDueAt);
+  const [dueAt, setDueAt] = useState(isEditMode ? toDatetimeLocal(task!.dueAt) : toDatetimeLocal(defaultDueAt));
   const [status, setStatus] = useState(isEditMode ? task!.status : "PENDING");
   const [selectedContactId, setSelectedContactId] = useState(contactId || (isEditMode ? task!.contactId || "" : defaultContactId));
   const [selectedAssigneeId, setSelectedAssigneeId] = useState("");
@@ -84,7 +92,7 @@ export function TaskModal({
     setDescription(isEditMode ? task!.description || "" : defaultDescription);
     setType(isEditMode ? task!.type : defaultType);
     setPriority(isEditMode ? task!.priority : defaultPriority);
-    setDueAt(isEditMode ? task!.dueAt?.slice(0, 16) || "" : defaultDueAt);
+    setDueAt(isEditMode ? toDatetimeLocal(task!.dueAt) : toDatetimeLocal(defaultDueAt));
     setStatus(isEditMode ? task!.status : "PENDING");
     setSelectedContactId(contactId || (isEditMode ? task!.contactId || "" : defaultContactId));
     setSelectedAssigneeId("");
@@ -101,8 +109,9 @@ export function TaskModal({
         const updated = await updateTask(task.id, {
           description: description.trim() || null,
           priority,
-          dueAt: dueAt || null,
+          dueAt: dueAt ? new Date(dueAt).toISOString() : null,
           status,
+          type,
           ...(selectedAssigneeId ? { userId: selectedAssigneeId } : {}),
         });
         showToast("Tarefa atualizada.", "success");
@@ -118,7 +127,7 @@ export function TaskModal({
           description: description.trim() || undefined,
           type,
           priority,
-          dueAt: dueAt || undefined,
+          dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
           contactId: contactId || selectedContactId || null,
           userId: selectedAssigneeId || undefined,
           source: defaultSource,
@@ -161,28 +170,27 @@ export function TaskModal({
         </>
       )}
     >
-          {!isEditMode && (
-            <div className="space-y-1.5">
-              <label className="label-field">Título</label>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Ex: Cobrar retorno da proposta"
-                className="input-noir"
-                autoFocus
-              />
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <label className="label-field">Título</label>
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Ex: Cobrar retorno da proposta"
+              className="input-noir"
+              autoFocus={!isEditMode}
+            />
+          </div>
 
-          {!contactId && !isEditMode && contactOptions.length > 0 && (
+          {(contactOptions.length > 0) && (
             <div className="space-y-1.5">
               <label className="label-field">Contato vinculado</label>
               <select
                 value={selectedContactId}
                 onChange={(event) => setSelectedContactId(event.target.value)}
                 className="select-noir"
+                disabled={isEditMode || !!contactId}
               >
-                <option value="">Selecionar contato...</option>
+                <option value="">Nenhum contato</option>
                 {contactOptions.map((contact) => (
                   <option key={contact.id} value={contact.id}>{contact.name}</option>
                 ))}
@@ -220,6 +228,21 @@ export function TaskModal({
                 </select>
               </div>
             )}
+
+            <div className="space-y-1.5">
+              <label className="label-field flex items-center gap-1">
+                Tipo
+              </label>
+              <select
+                value={type}
+                onChange={(event) => setType(event.target.value)}
+                className="select-noir"
+              >
+                {taskTypes.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
 
             <div className="space-y-1.5">
               <label className="label-field flex items-center gap-1">

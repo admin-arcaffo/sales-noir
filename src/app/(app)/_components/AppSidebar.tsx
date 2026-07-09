@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useFloatingChat } from "@/context/FloatingChatContext";
 import { getNavItems, type NavItemDefinition } from "@/lib/nav-order";
+import { getTaskNotifications } from "@/actions/crm";
 
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   "/dashboard": BarChart3,
@@ -30,8 +31,18 @@ export function AppSidebar() {
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [navItems, setNavItems] = useState<NavItemDefinition[]>([]);
+  const [taskCount, setTaskCount] = useState(0);
 
   const { conversations, lastReadMap } = useFloatingChat();
+
+  const fetchTaskCount = async () => {
+    try {
+      const { count } = await getTaskNotifications();
+      setTaskCount(count);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -40,6 +51,10 @@ export function AppSidebar() {
       const isLight = document.documentElement.classList.contains("light");
       setTheme(isLight ? "light" : "dark");
     }
+    
+    fetchTaskCount();
+    const interval = setInterval(fetchTaskCount, 5 * 60 * 1000); // 5 min
+    return () => clearInterval(interval);
   }, []);
 
   const toggleTheme = () => {
@@ -95,9 +110,14 @@ export function AppSidebar() {
                 }`}
             >
               {Icon && <Icon size={16} />}
-              {item.badge && unreadCount > 0 && (
+              {item.href === "/conversations" && item.badge && unreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full text-[8px] font-bold text-white flex items-center justify-center animate-pulse border-2 border-[#070709]">
                   {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+              {item.href === "/tasks" && taskCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 rounded-full text-[8px] font-bold text-white flex items-center justify-center border-2 border-[#070709]">
+                  {taskCount > 99 ? '99+' : taskCount}
                 </span>
               )}
               {/* Tooltip */}

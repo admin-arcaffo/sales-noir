@@ -40,7 +40,7 @@ export function BottomNav() {
   }, 0);
 
   return (
-    <nav className="md:hidden flex items-center justify-around fixed bottom-0 left-0 w-full h-[60px] bg-[#070709]/90 backdrop-blur-md border-t border-zinc-900 z-50">
+    <nav data-bottom-nav className="md:hidden flex items-center justify-around fixed bottom-0 left-0 w-full h-[calc(60px+env(safe-area-inset-bottom))] pb-[env(safe-area-inset-bottom)] bg-[#070709]/90 backdrop-blur-md border-t border-zinc-900 z-40">
       {navItems.map((item) => {
         const isActive = pathname.startsWith(item.href);
         const Icon = ICON_MAP[item.href];

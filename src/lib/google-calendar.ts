@@ -1,5 +1,49 @@
 import { google } from 'googleapis';
+import { randomUUID } from 'crypto';
 import prisma from './prisma';
+
+export class GoogleCalendarError extends Error {
+  status?: number;
+  code?: string;
+
+  constructor(message: string, options?: { status?: number; code?: string; cause?: unknown }) {
+    super(message);
+    this.name = 'GoogleCalendarError';
+    this.status = options?.status;
+    this.code = options?.code;
+    this.cause = options?.cause;
+  }
+}
+
+function getGoogleApiErrorDetails(error: unknown) {
+  const err = error as any;
+  const status = err?.response?.status || err?.code;
+  const apiError = err?.response?.data?.error;
+  const message = apiError?.message
+    || err?.response?.data?.error_description
+    || err?.errors?.[0]?.message
+    || err?.message
+    || 'Erro desconhecido no Google Agenda.';
+  const code = apiError?.status || apiError?.code || err?.code;
+
+  if (status === 401) {
+    return {
+      status,
+      code,
+      message: 'A conexão com o Google Agenda expirou ou foi revogada. Reconecte o Google Agenda nas configurações.',
+    };
+  }
+
+  if (status === 403) {
+    return {
+      status,
+      code,
+      message: 'O Google Agenda recusou a criação do evento. Verifique permissões da conta conectada.',
+    };
+  }
+
+  return { status, code, message };
+}
 
 const getOAuth2Client = () => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -7,9 +51,7 @@ const getOAuth2Client = () => {
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/google/callback';
 
   if (!clientId || !clientSecret) {
-    console.error('FATAL: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing!');
-  } else {
-    console.log('Google Client ID is present:', clientId.substring(0, 5) + '...');
+    throw new GoogleCalendarError('Google Agenda não está configurado no servidor.', { code: 'GOOGLE_CONFIG_MISSING' });
   }
 
   return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
@@ -56,13 +98,14 @@ export const createCalendarEvent = async (params: {
   location?: string;
   isOnline: boolean;
   timeZone?: string;
+  requestId?: string;
 }) => {
   const user = await prisma.user.findUnique({
     where: { id: params.userId },
   });
 
   if (!user || !user.googleAccessToken) {
-    throw new Error('Usuário não conectou o Google Calendar.');
+    throw new GoogleCalendarError('O closer selecionado não conectou o Google Agenda.', { code: 'GOOGLE_NOT_CONNECTED' });
   }
 
   const oauth2Client = getOAuth2Client();
@@ -110,7 +153,7 @@ export const createCalendarEvent = async (params: {
   if (params.isOnline) {
     event.conferenceData = {
       createRequest: {
-        requestId: `meet-${Date.now()}`,
+        requestId: params.requestId || `meet-${randomUUID()}`,
         conferenceSolutionKey: { type: 'hangoutsMeet' },
       },
     };
@@ -124,13 +167,23 @@ export const createCalendarEvent = async (params: {
       sendUpdates: params.attendeeEmail ? 'all' : 'none',
     });
 
+    const eventId = res.data.id;
+    if (!eventId) {
+      throw new GoogleCalendarError('Google Agenda criou uma resposta sem ID de evento.', { code: 'GOOGLE_EVENT_ID_MISSING' });
+    }
+
     return {
-      eventId: res.data.id,
+      eventId,
       meetLink: res.data.hangoutLink,
+      htmlLink: res.data.htmlLink,
     };
   } catch (error) {
     console.error('Erro ao criar evento no Google Calendar:', error);
-    throw new Error('Falha ao criar evento no Google Calendar');
+    if (error instanceof GoogleCalendarError) {
+      throw error;
+    }
+    const details = getGoogleApiErrorDetails(error);
+    throw new GoogleCalendarError(details.message, { status: details.status, code: details.code, cause: error });
   }
 };
 

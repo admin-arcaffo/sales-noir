@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowUpRight,
   BarChart3,
   Calendar as CalendarIcon,
@@ -11,14 +12,18 @@ import {
   Filter,
   MapPin,
   MessageSquare,
+  RefreshCw,
   TrendingUp,
   User,
   Video,
   Zap,
 } from "lucide-react";
-import { getDashboardData, getUpcomingMeetings, type DashboardData } from "@/actions/crm";
+import Link from "next/link";
+import { getDashboardData, getRecentMeetingAuditLogs, getUpcomingMeetings, type DashboardData, type MeetingAuditLogData } from "@/actions/crm";
 import { getHomePage } from "@/lib/nav-order";
 import { temperatureBadgeClasses } from "@/components/ui/noir";
+
+const NAV_ORDER_KEY = "nav:order";
 
 type DashboardUser = {
   id: string;
@@ -32,35 +37,63 @@ type MeetingData = {
   scheduledAt: Date | string;
   duration: number;
   meetLink: string | null;
+  googleCalendarHtmlLink: string | null;
+  calendarSyncStatus: string;
+  calendarSyncError: string | null;
   closer: {
     name: string | null;
   };
 };
 
-type DashboardClientProps = {
-  initialData: DashboardData;
+interface DashboardClientProps {
+  initialData: DashboardData | null;
   initialMeetings: MeetingData[];
-  users: DashboardUser[];
+  initialMeetingLogs: MeetingAuditLogData[];
+  users: { id: string; name: string | null }[];
+  fetchError?: string | null;
+  currentUserId?: string;
 };
 
 const tempColors = temperatureBadgeClasses;
 
-export function DashboardClient({ initialData, initialMeetings, users }: DashboardClientProps) {
+const meetingLogLabels: Record<string, string> = {
+  MEETING_CREATE_ATTEMPT: "Tentativa",
+  MEETING_GOOGLE_SUCCESS: "Google criado",
+  MEETING_GOOGLE_FAILURE: "Falha Google",
+  MEETING_CREATE_FAILED: "Falha",
+  MEETING_CREATED: "Criado",
+  MEETING_WHATSAPP_CONFIRMATION_FAILED: "Falha WhatsApp",
+  MEETING_REMINDER_SCHEDULE_FAILED: "Falha lembrete",
+  MEETING_STAGE_UPDATE_FAILED: "Falha estágio",
+};
+
+export function DashboardClient({ initialData, initialMeetings, initialMeetingLogs, users, fetchError, currentUserId }: DashboardClientProps) {
   const router = useRouter();
   const didMountRef = useRef(false);
 
   useEffect(() => {
+    const hasCustomOrder = typeof window !== "undefined" && localStorage.getItem(NAV_ORDER_KEY) !== null;
+    if (!hasCustomOrder) return;
     const home = getHomePage();
     if (home !== "/dashboard") {
-      router.replace(home);
+      const hasEntered = typeof window !== "undefined" && sessionStorage.getItem("app:entered") === "true";
+      if (!hasEntered) {
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("app:entered", "true");
+        }
+        router.replace(home);
+      }
     }
   }, [router]);
-  const [data, setData] = useState<DashboardData>(initialData);
+
+  const [data, setData] = useState<DashboardData | null>(initialData);
   const [meetings, setMeetings] = useState<MeetingData[]>(initialMeetings);
-  const [filterUserId, setFilterUserId] = useState<string>("");
-  const [filterMonth, setFilterMonth] = useState<string>(""); // Format: YYYY-MM
+  const [meetingLogs, setMeetingLogs] = useState<MeetingAuditLogData[]>(initialMeetingLogs);
+  const [filterUserId, setFilterUserId] = useState<string>(currentUserId || "");
+  const [filterMonth, setFilterMonth] = useState<string>("");
 
   useEffect(() => {
+    if (!initialData) return;
     if (!didMountRef.current) {
       didMountRef.current = true;
       return;
@@ -81,11 +114,13 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
     Promise.all([
       getDashboardData({ userId: filterUserId || undefined, month, year }),
       getUpcomingMeetings(filterUserId || undefined),
+      getRecentMeetingAuditLogs(12),
     ])
-      .then(([dashboardData, upcomingMeetings]) => {
+      .then(([dashboardData, upcomingMeetings, recentMeetingLogs]) => {
         if (!alive) return;
         setData(dashboardData);
         setMeetings(upcomingMeetings);
+        setMeetingLogs(recentMeetingLogs);
       })
       .catch((error) => {
         console.error("Failed to load dashboard data:", error);
@@ -94,7 +129,49 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
     return () => {
       alive = false;
     };
-  }, [filterUserId, filterMonth]);
+  }, [filterUserId, filterMonth, initialData]);
+
+  if (fetchError && !initialData) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="surface-noir-muted flex w-full max-w-md flex-col items-center gap-6 p-8 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+            <AlertTriangle className="h-6 w-6" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-zinc-100">Erro ao carregar dados</h2>
+            <p className="mt-2 text-sm text-zinc-500">{fetchError}</p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => router.refresh()}
+              className="btn-noir flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Tentar novamente
+            </button>
+            <Link
+              href="/conversations"
+              className="btn-noir-secondary flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm"
+            >
+              Ir para Conversas
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="flex flex-col items-center gap-4 text-zinc-500">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-800 border-t-white" />
+          <p className="text-sm">Carregando dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   const kpis = [
     { label: "Conversas Ativas", value: data.kpis.activeConversations, icon: MessageSquare, change: "Ao vivo", positive: true },
@@ -188,6 +265,7 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
                   meetings.map((meeting) => {
                     const date = new Date(meeting.scheduledAt);
                     const formattedDate = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(date);
+                    const calendarSynced = meeting.calendarSyncStatus === "SYNCED";
                     return (
                       <div key={meeting.id} className="p-4 flex items-center justify-between hover:bg-zinc-900/40 transition-colors">
                         <div className="flex items-center gap-3">
@@ -197,14 +275,63 @@ export function DashboardClient({ initialData, initialMeetings, users }: Dashboa
                           <div>
                             <p className="text-[11px] font-bold text-zinc-300">{meeting.title}</p>
                             <p className="text-[10px] text-zinc-500 mt-0.5">{formattedDate} • {meeting.duration} min</p>
+                            <p className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[9px] font-bold ${calendarSynced ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400" : "border-amber-500/20 bg-amber-500/10 text-amber-400"}`}>
+                              {calendarSynced ? "Google confirmado" : `Google: ${meeting.calendarSyncStatus}`}
+                            </p>
                           </div>
                         </div>
                         <div className="text-right space-y-1">
                           <p className="text-[10px] text-zinc-400 flex items-center justify-end gap-1"><User className="w-3 h-3" /> {meeting.closer.name}</p>
+                          {meeting.googleCalendarHtmlLink && (
+                            <a href={meeting.googleCalendarHtmlLink} target="_blank" rel="noopener noreferrer" className="block text-[9px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors">Abrir no Google</a>
+                          )}
                           {meeting.type === "ONLINE" && meeting.meetLink && (
                             <a href={meeting.meetLink} target="_blank" rel="noopener noreferrer" className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors">Entrar no Meet</a>
                           )}
                         </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="surface-noir">
+              <div className="p-5 border-b border-zinc-900 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-emerald-400" />
+                  <h2 className="label-mono text-emerald-400">Histórico de Agenda</h2>
+                </div>
+                <span className="label-mono">{meetingLogs.length} registros</span>
+              </div>
+              <div className="divide-y divide-zinc-900">
+                {meetingLogs.length === 0 ? (
+                  <div className="p-6 text-center text-zinc-500 text-xs">Nenhum registro de agendamento recente.</div>
+                ) : (
+                  meetingLogs.map((log) => {
+                    const createdAt = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(log.createdAt));
+                    const scheduledAt = log.scheduledAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(log.scheduledAt)) : "sem data";
+                    const statusClass = log.status === "SUCCESS"
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                      : log.status === "FAILED"
+                        ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-400";
+                    return (
+                      <div key={log.id} className="p-4 flex items-start justify-between gap-4 hover:bg-zinc-900/40 transition-colors">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded border px-2 py-0.5 text-[9px] font-bold ${statusClass}`}>
+                              {meetingLogLabels[log.action] || log.action}
+                            </span>
+                            <span className="text-[10px] text-zinc-500">{createdAt}</span>
+                          </div>
+                          <p className="mt-2 truncate text-[11px] font-bold text-zinc-300">{log.title || "Agendamento"}</p>
+                          <p className="mt-0.5 text-[10px] text-zinc-500">Marcado para {scheduledAt}{log.userName || log.userEmail ? ` por ${log.userName || log.userEmail}` : ""}</p>
+                          {log.error && <p className="mt-1 text-[10px] text-rose-300">{log.error}</p>}
+                        </div>
+                        {log.googleCalendarHtmlLink && (
+                          <a href={log.googleCalendarHtmlLink} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[9px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors">Google</a>
+                        )}
                       </div>
                     );
                   })

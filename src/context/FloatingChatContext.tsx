@@ -3,7 +3,16 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { type ConversationData, type ConversationMessage, sendConversationMessage } from "@/actions/crm";
-import { CHAT_CACHE_INVALIDATED_EVENT, clearChatCache } from "@/lib/chat-cache";
+import {
+  CHAT_CACHE_INVALIDATED_EVENT,
+  CHAT_CONVERSATIONS_CACHE_KEY,
+  FLOATING_CHAT_CONVERSATIONS_CACHE_KEY,
+  FLOATING_CHAT_LAST_SYNC_TIME_KEY,
+  clearChatCache,
+} from "@/lib/chat-cache";
+
+type FloatingChatView = "chat" | "list";
+const FLOATING_CHAT_MEDIA_QUERY = "(min-width: 768px)";
 
 interface FloatingChatContextType {
   conversations: ConversationData[];
@@ -18,6 +27,11 @@ interface FloatingChatContextType {
   setPopupPosition: (pos: { x: number; y: number } | null) => void;
   isMinimized: boolean;
   setIsMinimized: (min: boolean) => void;
+  floatingView: FloatingChatView;
+  setFloatingView: (view: FloatingChatView) => void;
+  isFloatingChatEnabled: boolean;
+  openFloatingConversation: (id: string, source?: ConversationData[]) => boolean;
+  openFloatingConversationList: () => void;
   syncStatus: "idle" | "syncing" | "error";
   syncError: string | null;
   lastSyncAt: Date | null;
@@ -72,6 +86,47 @@ function stripTemporaryConversationMediaUrls(conversations: ConversationData[]) 
   }));
 }
 
+function sortConversationsByActivity(conversations: ConversationData[]) {
+  return [...conversations].sort((a, b) => {
+    const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    return timeB - timeA;
+  });
+}
+
+function mergeConversationLists(existing: ConversationData[], incoming: ConversationData[]) {
+  const conversationMap = new Map(existing.map((conversation) => [conversation.id, conversation]));
+
+  incoming.forEach((conversation) => {
+    const previous = conversationMap.get(conversation.id);
+    conversationMap.set(
+      conversation.id,
+      previous ? mergeConversationData(previous, conversation) : conversation,
+    );
+  });
+
+  return sortConversationsByActivity(Array.from(conversationMap.values()));
+}
+
+function mergeConversationSource(existing: ConversationData[], source: ConversationData[]) {
+  const existingMap = new Map(existing.map((conversation) => [conversation.id, conversation]));
+  return sortConversationsByActivity(source.map((conversation) => {
+    const previous = existingMap.get(conversation.id);
+    return previous ? mergeConversationData(previous, conversation) : conversation;
+  }));
+}
+
+function canUseFloatingChat() {
+  return typeof window !== "undefined" && window.matchMedia(FLOATING_CHAT_MEDIA_QUERY).matches;
+}
+
+function createTempMessageId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `temp-${crypto.randomUUID()}`;
+  }
+  return `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function FloatingChatProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [conversations, setConversations] = useState<ConversationData[]>([]);
@@ -80,6 +135,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const [isFloating, setIsFloating] = useState(false);
   const [popupPosition, setPopupPosition] = useState<{ x: number; y: number } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [floatingView, setFloatingView] = useState<FloatingChatView>("chat");
+  const [isFloatingChatEnabled, setIsFloatingChatEnabled] = useState(false);
 
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "error">("idle");
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
@@ -89,12 +146,33 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const lastSyncTimeRef = useRef<string | null>(null);
   const hasDoneInitialSyncRef = useRef(false);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia(FLOATING_CHAT_MEDIA_QUERY);
+    const syncFloatingAvailability = () => {
+      const enabled = mediaQuery.matches;
+      setIsFloatingChatEnabled(enabled);
+      if (!enabled) {
+        setIsPopupOpen(false);
+        setIsFloating(false);
+        setPopupPosition(null);
+        setIsMinimized(false);
+      }
+    };
+
+    syncFloatingAvailability();
+    mediaQuery.addEventListener("change", syncFloatingAvailability);
+    return () => mediaQuery.removeEventListener("change", syncFloatingAvailability);
+  }, []);
+
   // Load cached conversations and last read map on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
+      sessionStorage.setItem("app:entered", "true");
       try {
-        const cached = localStorage.getItem("sales_arcaffo_conversations");
-        const cachedSync = localStorage.getItem("sales_arcaffo_last_sync_time");
+        const cached = localStorage.getItem(FLOATING_CHAT_CONVERSATIONS_CACHE_KEY) || localStorage.getItem(CHAT_CONVERSATIONS_CACHE_KEY);
+        const cachedSync = localStorage.getItem(FLOATING_CHAT_LAST_SYNC_TIME_KEY);
         if (cached) {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -144,11 +222,11 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (conversations.length > 0 && typeof window !== "undefined") {
       try {
-        const cacheFriendlyList = conversations.slice(0, 15).map((c) => ({
+        const cacheFriendlyList = conversations.slice(0, 30).map((c) => ({
           ...c,
-          messages: [], // Don't cache messages to save space
+          messages: c.messages.slice(-5),
         }));
-        localStorage.setItem("sales_arcaffo_conversations", JSON.stringify(cacheFriendlyList));
+        localStorage.setItem(FLOATING_CHAT_CONVERSATIONS_CACHE_KEY, JSON.stringify(cacheFriendlyList));
       } catch (e) {
         console.warn("Storage quota exceeded or error occurred while writing to localStorage", e);
         try {
@@ -156,7 +234,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
             ...c,
             messages: [],
           }));
-          localStorage.setItem("sales_arcaffo_conversations", JSON.stringify(metadataOnlyList));
+          localStorage.setItem(FLOATING_CHAT_CONVERSATIONS_CACHE_KEY, JSON.stringify(metadataOnlyList));
         } catch (innerErr) {
           console.error("Failed to store even metadata in localStorage", innerErr);
         }
@@ -208,12 +286,12 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
           try {
             const cachedOrgId = localStorage.getItem("sales_arcaffo_org_id");
             if (cachedOrgId && cachedOrgId !== result.orgId) {
-              localStorage.removeItem("sales_arcaffo_conversations");
-              localStorage.removeItem("sales_arcaffo_last_sync_time");
+              localStorage.removeItem(FLOATING_CHAT_CONVERSATIONS_CACHE_KEY);
+              localStorage.removeItem(FLOATING_CHAT_LAST_SYNC_TIME_KEY);
               lastSyncTimeRef.current = null;
               setConversations(result.conversations);
               localStorage.setItem("sales_arcaffo_org_id", result.orgId);
-              localStorage.setItem("sales_arcaffo_last_sync_time", result.syncTime);
+              localStorage.setItem(FLOATING_CHAT_LAST_SYNC_TIME_KEY, result.syncTime);
               lastSyncTimeRef.current = result.syncTime;
 
               hasDoneInitialSyncRef.current = true;
@@ -234,25 +312,20 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
           } else if (result.conversations.length === 0) {
             return prev;
           } else {
-            const updatedMap = new Map(result.conversations.map((c) => [c.id, c]));
-            const previousIds = new Set(prev.map((c) => c.id));
-            const merged = prev.map((c) => (updatedMap.has(c.id) ? mergeConversationData(c, updatedMap.get(c.id)!) : c));
-            const newItems = result.conversations.filter((c) => !previousIds.has(c.id));
-            nextList = [...newItems, ...merged];
+            nextList = mergeConversationLists(prev, result.conversations);
           }
 
-          nextList.sort((a, b) => {
-            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-            return timeB - timeA;
-          });
+          const activeConversation = activeConvoId ? prev.find((conversation) => conversation.id === activeConvoId) : null;
+          if (activeConversation && !nextList.some((conversation) => conversation.id === activeConversation.id)) {
+            nextList = [...nextList, activeConversation];
+          }
 
-          return nextList;
+          return sortConversationsByActivity(nextList);
         });
 
         if (typeof window !== "undefined") {
           try {
-            localStorage.setItem("sales_arcaffo_last_sync_time", result.syncTime);
+            localStorage.setItem(FLOATING_CHAT_LAST_SYNC_TIME_KEY, result.syncTime);
           } catch (e) {
             console.error("Failed to write last sync time to localStorage", e);
           }
@@ -298,12 +371,31 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     }
   };
 
+  const openFloatingConversation = (id: string, source?: ConversationData[]) => {
+    if (!canUseFloatingChat()) return false;
+    if (source && source.length > 0) {
+      setConversations((prev) => mergeConversationSource(prev, stripTemporaryConversationMediaUrls(source)));
+    }
+    selectConversation(id);
+    setFloatingView("chat");
+    setIsPopupOpen(true);
+    setIsMinimized(false);
+    return true;
+  };
+
+  const openFloatingConversationList = () => {
+    if (!canUseFloatingChat()) return;
+    setFloatingView("list");
+    setIsPopupOpen(true);
+    setIsMinimized(false);
+  };
+
   // Helper to send text message and update state optimistically
   const sendMessage = async (convoId: string, content: string) => {
     const trimmed = content.trim();
     if (!trimmed) return;
 
-    const tempId = `temp-${Date.now()}`;
+    const tempId = createTempMessageId();
     const tempTime = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
     const optimisticMessage = {
@@ -398,6 +490,11 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         setPopupPosition,
         isMinimized,
         setIsMinimized,
+        floatingView,
+        setFloatingView,
+        isFloatingChatEnabled,
+        openFloatingConversation,
+        openFloatingConversationList,
         syncStatus,
         syncError,
         lastSyncAt,

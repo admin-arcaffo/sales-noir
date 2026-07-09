@@ -183,7 +183,7 @@ function CheckoutContent() {
   };
 
   const handlePixCopy = () => {
-    const keyToCopy = pixKey || "00020126580014br.gov.bcb.pix0136salesarcaffo-payment-key-guid-1234-5678-90ab52040000530398654071055.045802BR5914Sales Arcaffo6009Sao Paulo62070503***6304d3e8";
+    const keyToCopy = pixKey || "00020126580014br.gov.bcb.pix0136dealeto-payment-key-guid-1234-5678-90ab52040000530398654071055.045802BR5914Dealeto6009Sao Paulo62070503***6304d3e8";
     navigator.clipboard.writeText(keyToCopy);
     setPixKeyCopied(true);
     setTimeout(() => setPixKeyCopied(false), 2000);
@@ -264,7 +264,7 @@ function CheckoutContent() {
             console.warn("Asaas API key not found. Running Pix in mock simulation mode.");
             setIsMockMode(true);
              setPixQrCode("");
-            setPixKey("00020126580014br.gov.bcb.pix0136salesarcaffo-payment-key-guid-1234-5678-90ab52040000530398654071055.045802BR5914Sales Arcaffo6009Sao Paulo62070503***6304d3e8");
+            setPixKey("00020126580014br.gov.bcb.pix0136dealeto-payment-key-guid-1234-5678-90ab52040000530398654071055.045802BR5914Dealeto6009Sao Paulo62070503***6304d3e8");
             setPixGenerated(true);
           } else {
             setErrorMsg(res.error || "Erro ao gerar cobrança Pix.");
@@ -335,7 +335,7 @@ function CheckoutContent() {
         </Link>
         <div className="flex items-center gap-2.5">
           <BrainCircuit className="w-4 h-4 text-zinc-400" />
-          <span className="font-extrabold text-xs tracking-widest uppercase">SALES ARCAFFO CHECKOUT</span>
+          <span className="font-extrabold text-xs tracking-widest uppercase">DEALETO CHECKOUT</span>
         </div>
       </header>
 
@@ -410,7 +410,7 @@ function CheckoutContent() {
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                      Sales Arcaffo {plan === "mensal" ? "Mensal" : "Anual"}
+                      Dealeto {plan === "mensal" ? "Mensal" : "Anual"}
                     </h3>
                     <p className="text-[10px] text-zinc-550 mt-0.5">Licenciamento de IA e copiloto tático</p>
                   </div>
@@ -653,7 +653,7 @@ function CheckoutContent() {
                         <div className="card-face card-front bg-gradient-to-br from-zinc-900 via-zinc-950 to-black border border-zinc-800 rounded p-5 flex flex-col justify-between text-white overflow-hidden shadow-inner">
                           <div className="flex justify-between items-start">
                             <div className="space-y-0.5">
-                              <span className="text-[7.5px] font-mono text-zinc-500 block tracking-widest uppercase">SALES ARCAFFO SYSTEMS</span>
+                              <span className="text-[7.5px] font-mono text-zinc-500 block tracking-widest uppercase">DEALETO SYSTEMS</span>
                               <span className="text-[10px] font-bold text-zinc-350 tracking-wider">OPERATIONAL KEY</span>
                             </div>
                             <div className="w-7 h-7 rounded bg-zinc-950 border border-zinc-850 flex items-center justify-center">
@@ -687,7 +687,7 @@ function CheckoutContent() {
                           
                           <div className="px-5 flex justify-between items-center gap-4">
                             <div className="flex-1 h-7 bg-zinc-900 border border-zinc-850 rounded flex items-center justify-end px-3 text-[9px] text-zinc-650 italic font-mono select-none">
-                              Sales Arcaffo Partner
+                              Dealeto Partner
                             </div>
                             <div className="w-12 h-7 bg-zinc-100 text-black font-mono flex items-center justify-center rounded font-bold text-xs tracking-wider">
                               {cardCvv || "•••"}
@@ -797,7 +797,7 @@ function CheckoutContent() {
 
       {/* Footer info */}
       <footer className="relative z-10 text-center text-[9px] text-zinc-650 mt-16 max-w-4xl mx-auto px-6 border-t border-zinc-900 pt-8 uppercase tracking-wider font-mono">
-        <p>© 2026 Sales Arcaffo. Em conformidade com o Banco Central do Brasil. Transações seguras.</p>
+        <p>© 2026 Dealeto. Em conformidade com o Banco Central do Brasil. Transações seguras.</p>
       </footer>
     </div>
   );

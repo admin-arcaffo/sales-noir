@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { type ReactNode } from "react";
 import { cn } from "@/components/ui/noir";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type ModalProps = {
   isOpen?: boolean;
@@ -35,11 +36,13 @@ export function Modal({
   footerClassName,
   overlayClassName,
 }: ModalProps) {
+  useEscapeKey(isOpen, onClose, closeDisabled);
+
   if (!isOpen) return null;
 
   return (
-    <div className={cn("fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200", overlayClassName)}>
-      <div className={cn("flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e] shadow-2xl", maxWidth)}>
+    <div className={cn("modal-overlay fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200", overlayClassName)}>
+      <div className={cn("flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e] shadow-2xl", maxWidth)}>
         <header className={cn("flex items-start justify-between gap-4 border-b border-white/5 bg-white/[0.02] p-5", headerClassName)}>
           <div>
             <div className="flex items-center gap-2 text-zinc-100">

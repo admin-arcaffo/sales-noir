@@ -2,6 +2,7 @@
 
 import { type TaskData } from "@/actions/crm";
 import { CheckCircle2, Circle, Clock, Calendar, AlertTriangle } from "lucide-react";
+import { isOverdue, formatTaskDate } from "@/lib/task-utils";
 
 const typeLabels: Record<string, string> = {
   CALL: "Ligação",
@@ -34,8 +35,14 @@ function TaskRow({
   const isDone = task.status === "DONE";
 
   return (
-    <div className={`group flex items-center gap-3 border-b border-white/5 px-4 py-2.5 transition-colors hover:bg-white/[0.02] ${isDone ? "opacity-50" : ""}`}>
-      <button onClick={() => onToggle(task.id, task.status)} className="shrink-0 text-zinc-500 transition-colors hover:text-emerald-400">
+    <div 
+      onClick={() => onEdit(task)}
+      className={`group flex items-center gap-3 border-b border-white/5 px-4 py-2.5 transition-colors hover:bg-white/[0.04] cursor-pointer ${isDone ? "opacity-50" : ""}`}
+    >
+      <button 
+        onClick={(e) => { e.stopPropagation(); onToggle(task.id, task.status); }} 
+        className="shrink-0 text-zinc-500 transition-colors hover:text-emerald-400"
+      >
         {isDone ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Circle className="h-4 w-4" />}
       </button>
 
@@ -51,8 +58,8 @@ function TaskRow({
         {task.priority === "URGENT" ? "Urg" : task.priority === "HIGH" ? "Alta" : task.priority === "MEDIUM" ? "Média" : "Baixa"}
       </span>
 
-      <span className={`hidden shrink-0 whitespace-nowrap text-[11px] md:block ${isOverdue(task) ? "text-red-400" : "text-zinc-500"}`}>
-        {task.dueAt ? formatShortDate(task.dueAt) : "—"}
+      <span className={`hidden shrink-0 whitespace-nowrap text-[11px] md:block ${isOverdue(task.dueAt, task.status) ? "text-red-400" : "text-zinc-500"}`}>
+        {task.dueAt ? formatTaskDate(task.dueAt) : "—"}
       </span>
 
       <span className="hidden w-28 truncate text-right text-[11px] text-zinc-500 lg:block">
@@ -60,37 +67,21 @@ function TaskRow({
       </span>
 
       <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        <button onClick={() => onEdit(task)} className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-white/10 hover:text-zinc-200">
+        <button 
+          onClick={(e) => { e.stopPropagation(); onEdit(task); }} 
+          className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-white/10 hover:text-zinc-200"
+        >
           Editar
         </button>
-        <button onClick={() => onDelete(task)} className="rounded px-1.5 py-1 text-[11px] text-red-500 hover:bg-red-500/10">
+        <button 
+          onClick={(e) => { e.stopPropagation(); onDelete(task); }} 
+          className="rounded px-1.5 py-1 text-[11px] text-red-500 hover:bg-red-500/10"
+        >
           Excluir
         </button>
       </div>
     </div>
   );
-}
-
-function isOverdue(task: TaskData) {
-  if (task.status === "DONE" || !task.dueAt) return false;
-  return new Date(task.dueAt) < new Date();
-}
-
-function formatShortDate(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const diffDays = Math.floor((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  const time = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-
-  if (diffDays < 0) {
-    const abs = Math.abs(diffDays);
-    if (abs === 0) return `Hoje ${time}`;
-    if (abs === 1) return `Ontem ${time}`;
-    return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${time}`;
-  }
-  if (diffDays === 0) return `Hoje ${time}`;
-  if (diffDays === 1) return `Amanhã ${time}`;
-  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${time}`;
 }
 
 export function TasksCompactList({
