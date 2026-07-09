@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
         if (reactingToId) {
           console.log(`[WEBHOOK] Processing reaction for ${reactingToId} (ID: ${requestId})`);
           await prisma.message.updateMany({
-            where: { waMessageId: reactingToId },
+            where: { waMessageId: reactingToId, whatsAppConnectionId: connection.id },
             data: { 
               reactions: {
                 ...(emoji ? { [emoji]: (Date.now()) } : {}) // Simple reaction storage
@@ -186,9 +186,11 @@ export async function POST(req: NextRequest) {
       console.log(`[WEBHOOK] Message received from ${phone} (ID: ${requestId})`);
 
       // Deduplication
-      const existingMessage = await prisma.message.findUnique({
-        where: { waMessageId },
-      });
+      const existingMessage = waMessageId
+        ? await prisma.message.findFirst({
+          where: { waMessageId, whatsAppConnectionId: connection.id },
+        })
+        : null;
       
       if (existingMessage) {
         console.log(`[WEBHOOK] Message already processed (waMessageId: ${waMessageId}, ID: ${requestId})`);
@@ -206,7 +208,7 @@ export async function POST(req: NextRequest) {
           data: {
             connectionId: connection.id,
             event: 'WEBHOOK_RECEIVED',
-            direction: 'INBOUND',
+            direction: isOutbound ? 'OUTBOUND' : 'INBOUND',
             statusCode: 200,
             errorMsg: 'Duplicate message (deduped)',
             payload: { waMessageId, phone },
@@ -334,26 +336,19 @@ export async function POST(req: NextRequest) {
         }
 
         // Create or reuse message record. Evolution can deliver the same webhook more than once.
-        const newMessage = await prisma.message.upsert({
-          where: { waMessageId },
-          update: {
-            waMessageKey: key,
-            waMessagePayload,
-            ...(type !== "TEXT" ? { mediaStatus: "PENDING" } : {}),
-            whatsAppConnectionId: connection.id,
-          },
-          create: {
-            conversationId: activeConversation.id,
-            direction: isOutbound ? "OUTBOUND" : "INBOUND",
-            type: type,
-            content: finalContent || fallbackLabels[type] || "Mensagem recebida",
-            mediaUrl: mediaUrl,
-            waMessageId,
-            waMessageKey: key,
-            waMessagePayload,
-            mediaStatus: type !== "TEXT" ? "PENDING" : "NONE",
-            timestamp: new Date(),
-            whatsAppConnectionId: connection.id,
+        const newMessage = await prisma.message.create({
+          data: {
+          conversationId: activeConversation.id,
+          direction: isOutbound ? "OUTBOUND" : "INBOUND",
+          type: type,
+          content: finalContent || fallbackLabels[type] || "Mensagem recebida",
+          mediaUrl: mediaUrl,
+          waMessageId,
+          waMessageKey: key,
+          waMessagePayload,
+          mediaStatus: type !== "TEXT" ? "PENDING" : "NONE",
+          timestamp: new Date(),
+          whatsAppConnectionId: connection.id,
           },
         });
 
@@ -406,7 +401,7 @@ export async function POST(req: NextRequest) {
           data: {
             connectionId: connection.id,
             event: 'WEBHOOK_RECEIVED',
-            direction: 'INBOUND',
+            direction: isOutbound ? 'OUTBOUND' : 'INBOUND',
             statusCode: 200,
             payload: { waMessageId, phone, type },
           }
@@ -446,7 +441,7 @@ export async function POST(req: NextRequest) {
           if (newContent) {
             console.log(`[WEBHOOK] Updating edited message ${waMessageId} (ID: ${requestId})`);
             await prisma.message.updateMany({
-              where: { waMessageId },
+              where: { waMessageId, whatsAppConnectionId: connection.id },
               data: { 
                 content: newContent,
                 isEdited: true
@@ -468,10 +463,10 @@ export async function POST(req: NextRequest) {
           
           const newStatus = statusMap[update.update.status];
           
-          if (newStatus) {
+            if (newStatus) {
             console.log(`[WEBHOOK] Updating message status ${waMessageId} to ${newStatus} (ID: ${requestId})`);
             await prisma.message.updateMany({
-              where: { waMessageId },
+              where: { waMessageId, whatsAppConnectionId: connection.id },
               data: { status: newStatus }
             }).catch(err => console.error('Failed to update message status:', err));
             revalidatePath('/conversations');
@@ -484,13 +479,17 @@ export async function POST(req: NextRequest) {
     // Handle connection status events
     if (event === "connection.update") {
       const connectionStatus = data.state || data.status || data.connection;
+      const accountJid = data.wuid || data.jid || data.user?.id || data.me?.id || null;
+      const parsedAccount = parseWhatsAppJid(accountJid);
       console.log(`[WEBHOOK] Connection update: ${connectionStatus} (ID: ${requestId})`);
 
       await prisma.whatsAppConnection.update({
         where: { id: connection.id },
         data: {
           status: (connectionStatus === 'open' || connectionStatus === 'CONNECTED') ? 'CONNECTED' : 'DISCONNECTED',
-          lastConnectedAt: (connectionStatus === 'open' || connectionStatus === 'CONNECTED') ? new Date() : connection.lastConnectedAt
+          lastConnectedAt: (connectionStatus === 'open' || connectionStatus === 'CONNECTED') ? new Date() : connection.lastConnectedAt,
+          ...(accountJid ? { whatsAppAccountJid: accountJid } : {}),
+          ...(parsedAccount.phone ? { whatsAppAccountPhone: parsedAccount.phone } : {}),
         }
       }).catch(err => console.error('Failed to update connection status:', err));
 

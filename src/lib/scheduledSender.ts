@@ -67,15 +67,34 @@ export async function sendScheduledWhatsAppMessage(conversationId: string, conte
   const waMessageId = result.key?.id || result.message?.key?.id || null;
 
   // 5. Salvar a mensagem no banco de dados
-  const message = await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      direction: "OUTBOUND",
-      type: "TEXT",
-      content,
-      waMessageId,
-    },
-  });
+  const existingMessage = waMessageId
+    ? await prisma.message.findFirst({
+      where: { waMessageId, whatsAppConnectionId: connection.id },
+      select: { id: true },
+    })
+    : null;
+
+  const message = existingMessage
+    ? await prisma.message.update({
+      where: { id: existingMessage.id },
+      data: {
+        conversationId: conversation.id,
+        direction: "OUTBOUND",
+        type: "TEXT",
+        content,
+        whatsAppConnectionId: connection.id,
+      },
+    })
+    : await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        direction: "OUTBOUND",
+        type: "TEXT",
+        content,
+        waMessageId,
+        whatsAppConnectionId: connection.id,
+      },
+    });
 
   // 6. Atualizar timestamp da última mensagem na conversa
   await prisma.conversation.update({

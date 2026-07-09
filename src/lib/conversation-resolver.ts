@@ -1,5 +1,4 @@
 import prisma from "@/lib/prisma";
-import { getBrazilianPhoneVariations } from "@/lib/phone";
 
 type ResolveOpenConversationInput = {
   contactId: string;
@@ -26,36 +25,6 @@ export async function resolveOpenConversation(input: ResolveOpenConversationInpu
       });
 
       if (conversation) return conversation;
-
-      const contact = await tx.contact.findUnique({
-        where: { id: input.contactId },
-        select: { phone: true, email: true, organizationId: true },
-      });
-
-      let isInternal = false;
-      if (contact) {
-        const phoneVariations = contact.phone ? getBrazilianPhoneVariations(contact.phone) : [];
-        const orClauses: Record<string, unknown>[] = [];
-        if (contact.email) orClauses.push({ email: contact.email });
-        if (phoneVariations.length) orClauses.push({ phone: { in: phoneVariations } });
-
-        if (orClauses.length > 0) {
-          const internalUser = await tx.user.findFirst({
-            where: { organizationId: contact.organizationId, OR: orClauses },
-            select: { id: true },
-          });
-          isInternal = !!internalUser;
-        }
-      }
-
-      if (isInternal) {
-        conversation = await tx.conversation.findFirst({
-          where: { contactId: input.contactId, status: "OPEN" },
-          orderBy: { updatedAt: "desc" },
-        });
-
-        if (conversation) return conversation;
-      }
 
       return tx.conversation.create({
         data: {

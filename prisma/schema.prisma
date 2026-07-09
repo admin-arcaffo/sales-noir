@@ -81,12 +81,15 @@ model WhatsAppConnection {
   qrCodeCreatedAt         DateTime?
   isActive                Boolean          @default(false)
   userId                  String?
+  whatsAppAccountJid      String?
+  whatsAppAccountPhone    String?
   conversations           Conversation[]
   integrationLogs         IntegrationLog[]
   organization            Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user                    User?            @relation(fields: [userId], references: [id])
 
   @@index([organizationId, userId, provider])
+  @@index([organizationId, whatsAppAccountPhone])
   @@index([organizationId, provider, status, isActive], map: "WhatsAppConnection_org_provider_status_active_idx")
   @@index([phoneNumberId, status])
 }
@@ -261,7 +264,7 @@ model Message {
   waMessageKey         Json?
   waMessagePayload     Json?
   timestamp            DateTime         @default(now())
-  waMessageId          String?          @unique
+  waMessageId          String?
   quotedMessageId      String?
   isEdited             Boolean          @default(false)
   reactions            Json?
@@ -270,6 +273,7 @@ model Message {
   media                Media?
   conversation         Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  @@unique([whatsAppConnectionId, waMessageId], map: "Message_connection_waMessageId_key")
   @@index([conversationId, timestamp])
   @@index([whatsAppConnectionId, timestamp])
 }

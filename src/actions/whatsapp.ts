@@ -9,6 +9,12 @@ import { encryptToken, generateWebhookSecret } from '@/lib/encryption';
 const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_ATTEMPTS_PER_DAY = 5;
 
+function getWebhookUrl() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || 'https://dealeto.arcaffo.com';
+  const normalized = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+  return `${normalized.replace(/\/$/, '')}/api/webhook/evolution`;
+}
+
 async function checkRateLimit(orgId: string, userId: string): Promise<{ allowed: boolean; error?: string }> {
   const connection = await prisma.whatsAppConnection.findFirst({
     where: { organizationId: orgId, userId }
@@ -110,6 +116,7 @@ export async function createWhatsAppInstance() {
       instanceToken: encryptedToken, // Store encrypted
       webhookSecret: webhookSecret, // For HMAC verification
       status: 'DISCONNECTED',
+      isActive: true,
       qrCodeCreatedAt: new Date(), // Track when QR was generated
       connectionAttempts: (existingConnection?.connectionAttempts || 0) + 1,
       lastConnectionAttemptAt: new Date()
@@ -132,12 +139,9 @@ export async function createWhatsAppInstance() {
     }
 
     // Configure webhook automatically
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL;
-    if (appUrl) {
-      const webhookUrl = `${appUrl.startsWith('http') ? '' : 'https://'}${appUrl}/api/webhook/evolution`;
-      console.log(`Configurando Webhook: ${webhookUrl}`);
-      await evolution.setWebhook(instanceName, result.hash, webhookUrl);
-    }
+    const webhookUrl = getWebhookUrl();
+    console.log(`Configurando Webhook: ${webhookUrl}`);
+    await evolution.setWebhook(instanceName, result.hash, webhookUrl);
 
     revalidatePath('/settings');
     return { success: true, instanceName };
@@ -257,16 +261,6 @@ export async function disconnectWhatsApp(deleteHistory = false) {
       return { error: "Conexão não encontrada." };
     }
 
-    // Decrypt token to disconnect from Evolution API
-    const { decryptToken } = await import('@/lib/encryption');
-    let decryptedToken: string;
-    try {
-      decryptedToken = decryptToken(connection.instanceToken || '');
-    } catch (error) {
-      console.error('Failed to decrypt token:', error);
-      return { error: "Erro ao descriptografar credenciais." };
-    }
-
     // Delete the instance completely on Evolution API
     if (connection.instanceName) {
       try {
@@ -303,9 +297,17 @@ export async function disconnectWhatsApp(deleteHistory = false) {
       }
     }
 
-    // Delete the WhatsApp Connection record entirely to allow a completely fresh setup
-    await prisma.whatsAppConnection.delete({
-      where: { id: connection.id }
+    // Keep the connection row stable so conversations remain attached across QR reconnects.
+    await prisma.whatsAppConnection.update({
+      where: { id: connection.id },
+      data: {
+        status: 'DISCONNECTED',
+        instanceName: null,
+        instanceToken: null,
+        webhookSecret: null,
+        qrCodeCreatedAt: null,
+        isActive: false,
+      }
     });
 
     revalidatePath('/settings');

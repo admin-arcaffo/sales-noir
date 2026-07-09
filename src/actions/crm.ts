@@ -1202,52 +1202,84 @@ export async function getDashboardData(filters?: { userId?: string; month?: numb
 async function rescueOrphanedConversations(orgId: string) {
   try {
     // Rescue legacy conversations missing a WhatsApp connection
-    const ownerUser = await prisma.user.findFirst({
-      where: { organizationId: orgId, role: 'owner' }
+    const connections = await prisma.whatsAppConnection.findMany({
+      where: { organizationId: orgId },
+      select: { id: true, userId: true, status: true, isActive: true, createdAt: true },
+      orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
     });
-    let ownerConnectionId: string | null = null;
-    if (ownerUser) {
-      const ownerConnection = await prisma.whatsAppConnection.findFirst({
-        where: { organizationId: orgId, userId: ownerUser.id }
-      });
-      if (!ownerConnection) {
-        const firstConnection = await prisma.whatsAppConnection.findFirst({
-          where: { organizationId: orgId }
-        });
-        if (firstConnection) ownerConnectionId = firstConnection.id;
-      } else {
-        ownerConnectionId = ownerConnection.id;
-      }
-    }
 
-    if (ownerConnectionId) {
+    const ownerUser = await prisma.user.findFirst({
+      where: { organizationId: orgId, role: 'owner' },
+      select: { id: true },
+    });
+
+    const connectionIds = new Set(connections.map((connection) => connection.id));
+    const connectionByUserId = new Map(
+      connections
+        .filter((connection) => connection.userId)
+        .map((connection) => [connection.userId as string, connection.id])
+    );
+    let fallbackConnectionId: string | null = null;
+    if (ownerUser) {
+      fallbackConnectionId = connectionByUserId.get(ownerUser.id) || null;
+    }
+    if (!fallbackConnectionId) fallbackConnectionId = connections[0]?.id || null;
+
+    if (fallbackConnectionId) {
       const convosWithoutConnection = await prisma.conversation.findMany({
         where: { contact: { organizationId: orgId }, whatsAppConnectionId: null },
-        select: { id: true, contactId: true, status: true, lastMessageAt: true, _count: { select: { messages: true } } },
+        select: {
+          id: true,
+          contactId: true,
+          status: true,
+          lastMessageAt: true,
+          contact: { select: { assignedUserId: true } },
+          messages: {
+            orderBy: { timestamp: 'desc' },
+            take: 1,
+            select: { whatsAppConnectionId: true },
+          },
+          _count: { select: { messages: true } },
+        },
         take: 500
       });
 
-      const migratableIds = convosWithoutConnection
+      const migratableConversations = convosWithoutConnection
         .filter((c) => c._count.messages > 0)
-        .map((c) => c.id);
+        .map((conversation) => {
+          const latestMessageConnectionId = conversation.messages[0]?.whatsAppConnectionId;
+          const assignedUserConnectionId = conversation.contact.assignedUserId
+            ? connectionByUserId.get(conversation.contact.assignedUserId)
+            : null;
+          const targetConnectionId = latestMessageConnectionId && connectionIds.has(latestMessageConnectionId)
+            ? latestMessageConnectionId
+            : assignedUserConnectionId || fallbackConnectionId;
 
-      if (migratableIds.length > 0) {
-        console.log(`[RESCUE] Merging ${migratableIds.length} orphaned conversations into connection ${ownerConnectionId}`);
+          return { id: conversation.id, targetConnectionId };
+        })
+        .filter((conversation) => Boolean(conversation.targetConnectionId));
 
-        for (let i = 0; i < migratableIds.length; i += 50) {
-          const batch = migratableIds.slice(i, i + 50);
+      if (migratableConversations.length > 0) {
+        console.log(`[RESCUE] Merging ${migratableConversations.length} orphaned conversations into their best matching connection`);
+
+        for (let i = 0; i < migratableConversations.length; i += 50) {
+          const batch = migratableConversations.slice(i, i + 50);
+          const targetByConversationId = new Map(batch.map((conversation) => [conversation.id, conversation.targetConnectionId as string]));
 
           await prisma.$transaction(async (tx) => {
             const orphans = await tx.conversation.findMany({
-              where: { id: { in: batch } },
+              where: { id: { in: batch.map((conversation) => conversation.id) } },
               select: { id: true, contactId: true, lastMessageAt: true },
             });
 
             for (const orphan of orphans) {
+              const targetConnectionId = targetByConversationId.get(orphan.id);
+              if (!targetConnectionId) continue;
+
               const existing = await tx.conversation.findFirst({
                 where: {
                   contactId: orphan.contactId,
-                  whatsAppConnectionId: ownerConnectionId,
+                  whatsAppConnectionId: targetConnectionId,
                   status: "OPEN",
                 },
                 select: { id: true, lastMessageAt: true },
@@ -1257,6 +1289,11 @@ async function rescueOrphanedConversations(orgId: string) {
                 await tx.message.updateMany({
                   where: { conversationId: orphan.id },
                   data: { conversationId: existing.id },
+                });
+
+                await tx.message.updateMany({
+                  where: { conversationId: existing.id, whatsAppConnectionId: null },
+                  data: { whatsAppConnectionId: targetConnectionId },
                 });
 
                 if (orphan.lastMessageAt && (!existing.lastMessageAt || orphan.lastMessageAt > existing.lastMessageAt)) {
@@ -1273,7 +1310,12 @@ async function rescueOrphanedConversations(orgId: string) {
               } else {
                 await tx.conversation.update({
                   where: { id: orphan.id },
-                  data: { whatsAppConnectionId: ownerConnectionId },
+                  data: { whatsAppConnectionId: targetConnectionId },
+                });
+
+                await tx.message.updateMany({
+                  where: { conversationId: orphan.id, whatsAppConnectionId: null },
+                  data: { whatsAppConnectionId: targetConnectionId },
                 });
               }
             }
@@ -2898,17 +2940,36 @@ export async function sendConversationMessage(conversationId: string, content: s
       throw new Error('Unsupported WhatsApp provider or missing configuration');
     }
 
-    const message = await prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        direction: 'OUTBOUND',
-        type: 'TEXT',
-        content: trimmedContent,
-        waMessageId,
-        quotedMessageId,
-        whatsAppConnectionId: connection.id,
-      },
-    });
+    const existingWebhookMessage = waMessageId
+      ? await prisma.message.findFirst({
+        where: { waMessageId, whatsAppConnectionId: connection.id },
+        select: { id: true },
+      })
+      : null;
+
+    const message = existingWebhookMessage
+      ? await prisma.message.update({
+        where: { id: existingWebhookMessage.id },
+        data: {
+          conversationId: conversation.id,
+          direction: 'OUTBOUND',
+          type: 'TEXT',
+          content: trimmedContent,
+          quotedMessageId,
+          whatsAppConnectionId: connection.id,
+        },
+      })
+      : await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          direction: 'OUTBOUND',
+          type: 'TEXT',
+          content: trimmedContent,
+          waMessageId,
+          quotedMessageId,
+          whatsAppConnectionId: connection.id,
+        },
+      });
 
     await prisma.conversation.update({
       where: { id: conversation.id },
@@ -3119,8 +3180,8 @@ export async function sendConversationMedia(conversationId: string, base64: stri
     }
 
     let savedMessage;
-    const existingWebhookMessage = waMessageId ? await prisma.message.findUnique({
-      where: { waMessageId },
+    const existingWebhookMessage = waMessageId ? await prisma.message.findFirst({
+      where: { waMessageId, whatsAppConnectionId: connection.id },
       select: { id: true },
     }) : null;
 
@@ -4949,7 +5010,7 @@ export async function syncAfterReconnect() {
       const waMessageIds = Array.from(new Set(importableMessages.map((msg) => msg.waMessageId)));
       const existingMessages = waMessageIds.length > 0
         ? await prisma.message.findMany({
-          where: { waMessageId: { in: waMessageIds } },
+          where: { waMessageId: { in: waMessageIds }, whatsAppConnectionId: connection.id },
           select: { waMessageId: true },
         })
         : [];
@@ -5000,6 +5061,7 @@ export async function syncAfterReconnect() {
         waMessageKey: msg.waMessageKey,
         waMessagePayload: msg.waMessagePayload,
         mediaStatus: msg.mediaStatus,
+        whatsAppConnectionId: connection.id,
       }));
 
       const result = newMessageData.length > 0
@@ -5091,7 +5153,7 @@ export async function syncSingleConversation(conversationId: string): Promise<{ 
     const waMessageIds = Array.from(new Set(messages.map((msg: any) => msg.key?.id).filter(Boolean))) as string[];
     const existingMessages = waMessageIds.length > 0
       ? await prisma.message.findMany({
-        where: { waMessageId: { in: waMessageIds } },
+        where: { waMessageId: { in: waMessageIds }, whatsAppConnectionId: connection.id },
         select: { waMessageId: true },
       })
       : [];
@@ -5136,6 +5198,7 @@ export async function syncSingleConversation(conversationId: string): Promise<{ 
         status: isOutbound ? 'READ' : 'RECEIVED',
         waMessageKey: msg.key || null,
         mediaStatus: isMediaMessageType(type) ? 'PENDING' : 'NONE',
+        whatsAppConnectionId: connection.id,
       });
 
       if (msgTimestamp > latestMsgDate) latestMsgDate = msgTimestamp;

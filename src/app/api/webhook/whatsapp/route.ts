@@ -126,8 +126,8 @@ export async function POST(req: NextRequest) {
       console.log(`[WEBHOOK-META] Message from ${phone} (ID: ${requestId})`);
 
       if (waMessageId) {
-        const existingMessage = await prisma.message.findUnique({
-          where: { waMessageId },
+        const existingMessage = await prisma.message.findFirst({
+          where: { waMessageId, whatsAppConnectionId: connection.id },
         });
 
         if (existingMessage) {
