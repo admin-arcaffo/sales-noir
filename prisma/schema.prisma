@@ -458,18 +458,25 @@ model PendingPayment {
 }
 
 model ScheduledMessage {
-  id             String       @id @default(cuid())
-  conversationId String
-  content        String
-  scheduledFor   DateTime
-  status         String       @default("PENDING")
-  notified       Boolean      @default(false)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  id                String       @id @default(cuid())
+  conversationId    String
+  content           String
+  scheduledFor      DateTime
+  status            String       @default("PENDING")
+  notified          Boolean      @default(false)
+  attemptCount      Int          @default(0)
+  lastAttemptAt     DateTime?
+  sentAt            DateTime?
+  failedAt          DateTime?
+  lastError         String?
+  dispatchMessageId String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([status, scheduledFor])
   @@index([conversationId, status])
+  @@index([status, lastAttemptAt])
 }
 
 model Meeting {

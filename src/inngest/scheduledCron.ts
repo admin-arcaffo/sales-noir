@@ -18,14 +18,17 @@ export const scheduledMessagesCron = inngest.createFunction(
     triggers: [{ cron: "*/5 * * * *" }], // A cada 5 minutos
   },
   async ({ step }) => {
+    const now = new Date();
+    const staleProcessingBefore = new Date(now.getTime() - 10 * 60 * 1000);
+
     // 1. Buscar mensagens PENDING que já deveriam ter sido enviadas
     const overdueMessages = await step.run("fetch-overdue-messages", async () => {
       return prisma.scheduledMessage.findMany({
         where: {
-          status: "PENDING",
-          scheduledFor: {
-            lte: new Date(), // scheduledFor <= agora
-          },
+          OR: [
+            { status: "PENDING", scheduledFor: { lte: now } },
+            { status: "PROCESSING", lastAttemptAt: { lt: staleProcessingBefore } },
+          ],
         },
         orderBy: { scheduledFor: "asc" },
         take: 20, // Limitar para evitar timeout em caso de muitas mensagens acumuladas
@@ -43,27 +46,14 @@ export const scheduledMessagesCron = inngest.createFunction(
 
     // 2. Processar cada mensagem individualmente
     for (const msg of overdueMessages) {
-      try {
-        await step.run(`send-overdue-${msg.id}`, async () => {
-          const { sendScheduledWhatsAppMessage } = await import("@/lib/scheduledSender");
-          await sendScheduledWhatsAppMessage(msg.conversationId, msg.content);
+      const result = await step.run(`dispatch-overdue-${msg.id}`, async () => {
+        const { dispatchScheduledMessage } = await import("@/lib/scheduledSender");
+        return dispatchScheduledMessage(msg.id, { source: "cron-fallback" });
+      });
 
-          // Marcar como SENT
-          await prisma.scheduledMessage.update({
-            where: { id: msg.id },
-            data: { status: "SENT", notified: false },
-          });
-        });
+      if (result.success) {
         sent++;
-      } catch (err) {
-        console.error(`[CRON FALLBACK] Failed to send message ${msg.id}:`, err);
-        
-        await step.run(`mark-failed-${msg.id}`, async () => {
-          await prisma.scheduledMessage.update({
-            where: { id: msg.id },
-            data: { status: "FAILED" },
-          });
-        });
+      } else if ((result as any).status === "FAILED") {
         failed++;
       }
     }

@@ -532,31 +532,9 @@ export const sendScheduledMessage = inngest.createFunction(
       return { success: false, reason: "Message was cancelled or updated" };
     }
 
-    try {
-      // 4. Send the message
-      await step.run("send-whatsapp-message", async () => {
-        const { sendScheduledWhatsAppMessage } = await import("@/lib/scheduledSender");
-        await sendScheduledWhatsAppMessage(active.conversationId, active.content);
-      });
-
-      // 5. Update status to SENT
-      await step.run("mark-sent", async () => {
-        await prisma.scheduledMessage.update({
-          where: { id: scheduledMessageId },
-          data: { status: "SENT", notified: false },
-        });
-      });
-
-      return { success: true };
-    } catch (err: any) {
-      // 6. Update status to FAILED
-      await step.run("mark-failed", async () => {
-        await prisma.scheduledMessage.update({
-          where: { id: scheduledMessageId },
-          data: { status: "FAILED" },
-        });
-      });
-      throw err;
-    }
+    return step.run("dispatch-scheduled-message", async () => {
+      const { dispatchScheduledMessage } = await import("@/lib/scheduledSender");
+      return dispatchScheduledMessage(active.id, { source: "inngest-scheduled-dispatch" });
+    });
   }
 );

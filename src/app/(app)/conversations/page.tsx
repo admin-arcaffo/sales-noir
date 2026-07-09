@@ -463,10 +463,13 @@ export default function ConversationsPage() {
   // Scheduled Messages States
   const [scheduleGlobalDate, setScheduleGlobalDate] = useState("");
   const [scheduleGlobalTime, setScheduleGlobalTime] = useState("");
-  const [scheduledMessages, setScheduledMessages] = useState([{ id: Date.now().toString(), content: "" }]);
+  const [scheduleDrafts, setScheduleDrafts] = useState([{ id: Date.now().toString(), content: "" }]);
   const [pendingSchedules, setPendingSchedules] = useState<any[]>([]);
+  const [scheduledIssues, setScheduledIssues] = useState<any[]>([]);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [retryingScheduleId, setRetryingScheduleId] = useState<string | null>(null);
+  const [isRetryingSchedules, setIsRetryingSchedules] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [quotingMessage, setQuotingMessage] = useState<any>(null);
   const { showToast } = useToast();
@@ -598,11 +601,12 @@ export default function ConversationsPage() {
   // Check scheduled notifications on a timer
   useEffect(() => {
     if (typeof window === "undefined") return;
+    void checkScheduledNotifications();
     const interval = setInterval(() => {
       void checkScheduledNotifications();
     }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedConnectionId, assignedToMe]);
 
   useKeyboardShortcuts({
     onEscape: () => {
@@ -848,6 +852,23 @@ export default function ConversationsPage() {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
 
+  const getScheduleStatus = (schedule: any) => {
+    if (schedule.status === "FAILED") return { label: "Falhou", className: "border-red-500/20 bg-red-500/10 text-red-300" };
+    if (schedule.status === "PROCESSING") return { label: "Processando", className: "border-sky-500/20 bg-sky-500/10 text-sky-300" };
+    if (new Date(schedule.scheduledFor).getTime() <= Date.now()) return { label: "Atrasada", className: "border-amber-500/20 bg-amber-500/10 text-amber-300" };
+    return { label: "Pendente", className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300" };
+  };
+
+  const loadScheduledIssues = async () => {
+    try {
+      const { getScheduledMessageIssues } = await import("@/actions/crm");
+      const issues = await getScheduledMessageIssues({ filterConnectionId: selectedConnectionId, assignedToMe });
+      setScheduledIssues(issues || []);
+    } catch (err) {
+      console.error("Failed to load scheduled message issues", err);
+    }
+  };
+
   
   const checkScheduledNotifications = async () => {
     try {
@@ -860,6 +881,7 @@ export default function ConversationsPage() {
         const ids = unnotified.map(m => m.id);
         await markScheduledMessagesAsNotified(ids);
       }
+      void loadScheduledIssues();
     } catch (err) {
       console.error("Failed to check scheduled notifications", err);
     }
@@ -870,7 +892,7 @@ export default function ConversationsPage() {
       const { getScheduledMessages } = await import("@/actions/crm");
       const list = await getScheduledMessages(convoId);
       setPendingSchedules(list || []);
-      setScheduledMessages([{ id: Date.now().toString(), content: "" }]);
+      setScheduleDrafts([{ id: Date.now().toString(), content: "" }]);
       setEditingScheduleId(null);
       setScheduleGlobalDate("");
       setScheduleGlobalTime("");
@@ -881,17 +903,18 @@ export default function ConversationsPage() {
 
   const handleEditSchedule = (schedule: any) => {
     setEditingScheduleId(schedule.id);
-    setScheduledMessages([{ id: Date.now().toString(), content: schedule.content }]);
-    const d = new Date(schedule.scheduledFor);
-    setScheduleGlobalDate(d.toISOString().split("T")[0]);
-    setScheduleGlobalTime(d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
+    setScheduleDrafts([{ id: Date.now().toString(), content: schedule.content }]);
+    const local = formatDateTimeLocal(schedule.scheduledFor);
+    setScheduleGlobalDate(local.slice(0, 10));
+    setScheduleGlobalTime(local.slice(11, 16));
+    setIsScheduleOpen(true);
   };
 
   const handleSaveSchedule = async () => {
     if (!selectedConvo) return;
     setIsSavingSchedule(true);
     try {
-      const { scheduleMessages } = await import("@/actions/crm");
+      const { scheduleMessages, rescheduleScheduledMessage, cancelScheduledMessage } = await import("@/actions/crm");
       
       if (!scheduleGlobalDate || !scheduleGlobalTime) {
         showToast("Preencha a data e hora globais para o agendamento.", "error");
@@ -899,7 +922,7 @@ export default function ConversationsPage() {
         return;
       }
 
-      const validMessages = scheduledMessages.filter(item => item.content.trim());
+      const validMessages = scheduleDrafts.filter(item => item.content.trim());
       if (validMessages.length === 0) {
         showToast("Preencha ao menos uma mensagem para agendar.", "error");
         setIsSavingSchedule(false);
@@ -929,15 +952,18 @@ export default function ConversationsPage() {
         };
       });
       
-      if (editingScheduleId) {
-        const { cancelScheduledMessage } = await import("@/actions/crm");
-        await cancelScheduledMessage(editingScheduleId);
+      if (editingScheduleId && messagesToSchedule.length === 1) {
+        await rescheduleScheduledMessage(editingScheduleId, messagesToSchedule[0].scheduledFor, messagesToSchedule[0].content);
+      } else {
+        if (editingScheduleId) {
+          await cancelScheduledMessage(editingScheduleId);
+        }
+        await scheduleMessages(selectedConvo, messagesToSchedule);
       }
-
-      await scheduleMessages(selectedConvo, messagesToSchedule);
       showToast(editingScheduleId ? "Agendamento editado com sucesso!" : "Agendamento salvo com sucesso!", "success");
       setEditingScheduleId(null);
       void loadScheduledMessages(selectedConvo);
+      void loadScheduledIssues();
       setIsScheduleOpen(false);
     } catch (err: any) {
       console.error(err);
@@ -952,10 +978,59 @@ export default function ConversationsPage() {
       const { cancelScheduledMessage } = await import("@/actions/crm");
       await cancelScheduledMessage(id);
       if (selectedConvo) void loadScheduledMessages(selectedConvo);
+      void loadScheduledIssues();
     } catch (err: any) {
       showToast("Erro ao cancelar: " + err.message, "error");
     }
   };
+
+  const handleRetrySchedule = async (id: string) => {
+    setRetryingScheduleId(id);
+    try {
+      const { retryScheduledMessage } = await import("@/actions/crm");
+      await retryScheduledMessage(id);
+      showToast("Mensagem agendada enviada com sucesso.", "success");
+      if (selectedConvo) void loadScheduledMessages(selectedConvo);
+      void loadScheduledIssues();
+    } catch (err: any) {
+      showToast(err.message || "Não foi possível reenviar a mensagem.", "error");
+      if (selectedConvo) void loadScheduledMessages(selectedConvo);
+      void loadScheduledIssues();
+    } finally {
+      setRetryingScheduleId(null);
+    }
+  };
+
+  const handleRetryAllScheduleIssues = async () => {
+    setIsRetryingSchedules(true);
+    try {
+      const { retryOverdueScheduledMessages } = await import("@/actions/crm");
+      const result = await retryOverdueScheduledMessages({ filterConnectionId: selectedConnectionId, assignedToMe });
+      showToast(`Reenvio concluído: ${result.sent} enviada(s), ${result.failed} falha(s).`, result.failed > 0 ? "error" : "success");
+      if (selectedConvo) void loadScheduledMessages(selectedConvo);
+      void loadScheduledIssues();
+    } catch (err: any) {
+      showToast(err.message || "Não foi possível reenviar as mensagens com problema.", "error");
+    } finally {
+      setIsRetryingSchedules(false);
+    }
+  };
+
+  const handleOpenScheduledIssue = (issue: any) => {
+    const conversationId = issue.conversationId || issue.conversation?.id;
+    if (!conversationId) return;
+    const existsInCurrentList = conversations.some((conversation) => conversation.id === conversationId);
+    if (!existsInCurrentList) {
+      showToast("Esta conversa não está no filtro atual. Ajuste os filtros para abri-la.", "error");
+      return;
+    }
+    selectConversation(conversationId, conversations);
+    setTacticalTab("acoes");
+  };
+
+  useEffect(() => {
+    void loadScheduledIssues();
+  }, [selectedConnectionId, assignedToMe, cacheInvalidationVersion]);
 
   const handleToggleLeadTask = async (task: TaskData) => {
     try {
@@ -2214,6 +2289,61 @@ export default function ConversationsPage() {
           )}
         </div>
 
+        {scheduledIssues.length > 0 && !isSidebarCollapsed && (
+          <div className="border-b border-amber-500/10 bg-amber-500/[0.04] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-amber-300">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span className="text-[10px] font-extrabold uppercase tracking-wider">
+                  {scheduledIssues.length} agendamento(s) com atenção
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleRetryAllScheduleIssues()}
+                disabled={isRetryingSchedules}
+                className="rounded border border-amber-400/20 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-amber-200 transition-colors hover:bg-amber-400/10 disabled:opacity-50"
+              >
+                {isRetryingSchedules ? "Reenviando..." : "Reenviar"}
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {scheduledIssues.slice(0, 3).map((issue) => {
+                const status = getScheduleStatus(issue);
+                return (
+                  <button
+                    key={issue.id}
+                    type="button"
+                    onClick={() => handleOpenScheduledIssue(issue)}
+                    className="w-full rounded border border-white/5 bg-black/20 p-2 text-left transition-colors hover:bg-white/[0.04]"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[10px] font-semibold text-zinc-200">
+                        {issue.conversation?.contact?.name || "Contato"}
+                      </span>
+                      <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase ${status.className}`}>
+                        {status.label}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-1 text-[9px] text-zinc-500">{issue.content}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {scheduledIssues.length > 0 && isSidebarCollapsed && (
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed(false)}
+            className="mx-auto my-3 flex h-8 w-8 items-center justify-center rounded-full border border-amber-400/20 bg-amber-500/10 text-amber-300"
+            title={`${scheduledIssues.length} agendamento(s) com atenção`}
+          >
+            <AlertCircle className="h-4 w-4" />
+          </button>
+        )}
+
         <div className="flex-1 overflow-y-auto no-scrollbar">
           {isLoading && conversations.length === 0 ? (
             <div className="p-4 space-y-4">
@@ -3243,16 +3373,16 @@ export default function ConversationsPage() {
                       </div>
 
                       <div className="space-y-4">
-                        {scheduledMessages.map((item, index) => (
+                        {scheduleDrafts.map((item, index) => (
                           <div key={item.id} className="space-y-2 pb-4 border-b border-white/5 relative">
                             <div className="flex items-center justify-between">
                               <label className="text-[9px] uppercase font-bold tracking-wider text-zinc-500 block">
                                 Mensagem {index + 1}
                               </label>
-                              {scheduledMessages.length > 1 && (
+                              {scheduleDrafts.length > 1 && (
                                 <button
                                   type="button"
-                                  onClick={() => setScheduledMessages(prev => prev.filter(i => i.id !== item.id))}
+                                  onClick={() => setScheduleDrafts(prev => prev.filter(i => i.id !== item.id))}
                                   className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
                                 >
                                   Remover
@@ -3263,9 +3393,9 @@ export default function ConversationsPage() {
                             <textarea
                               value={item.content}
                               onChange={(e) => {
-                                const newItems = [...scheduledMessages];
+                                const newItems = [...scheduleDrafts];
                                 newItems[index].content = e.target.value;
-                                setScheduledMessages(newItems);
+                                setScheduleDrafts(newItems);
                               }}
                               placeholder="Escreva a mensagem..."
                               className="input-noir min-h-[60px] resize-none p-2 text-xs placeholder:text-zinc-700"
@@ -3275,7 +3405,7 @@ export default function ConversationsPage() {
                         
                         <button
                           type="button"
-                          onClick={() => setScheduledMessages([...scheduledMessages, { id: Date.now().toString(), content: "" }])}
+                          onClick={() => setScheduleDrafts([...scheduleDrafts, { id: Date.now().toString(), content: "" }])}
                           className="w-full py-1.5 bg-white/5 border border-white/10 border-dashed rounded text-[10px] text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition-colors flex items-center justify-center gap-1"
                         >
                           <Plus className="w-3 h-3" /> Adicionar Mensagem
@@ -3284,16 +3414,36 @@ export default function ConversationsPage() {
 
                       {pendingSchedules.length > 0 && (
                         <div className="pt-2">
-                          <label className="text-[9px] uppercase font-bold tracking-wider text-emerald-500 block mb-2">Mensagens Pendentes ({pendingSchedules.length})</label>
+                          <label className="text-[9px] uppercase font-bold tracking-wider text-emerald-500 block mb-2">Agendamentos Ativos ({pendingSchedules.length})</label>
                           <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                            {pendingSchedules.map((schedule) => (
-                              <div key={schedule.id} className="flex flex-col gap-1.5 rounded border border-white/5 bg-white/[0.03] p-2">
-                                <p className="text-[10px] text-zinc-300 line-clamp-2">{schedule.content}</p>
+                            {pendingSchedules.map((schedule) => {
+                              const status = getScheduleStatus(schedule);
+                              return (
+                              <div key={schedule.id} className={`flex flex-col gap-1.5 rounded border p-2 ${status.className}`}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[10px] text-zinc-200 line-clamp-2">{schedule.content}</p>
+                                  <span className="shrink-0 rounded-full bg-black/20 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider">
+                                    {status.label}
+                                  </span>
+                                </div>
+                                {schedule.lastError && (
+                                  <p className="text-[9px] text-red-200/80 line-clamp-2">{schedule.lastError}</p>
+                                )}
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[9px] text-zinc-500">
+                                  <span className="text-[9px] text-zinc-400">
                                     {new Date(schedule.scheduledFor).toLocaleString('pt-BR', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })}
+                                    {schedule.attemptCount ? ` • ${schedule.attemptCount} tentativa(s)` : ""}
                                   </span>
                                   <div className="flex gap-2">
+                                    {(schedule.status === "FAILED" || new Date(schedule.scheduledFor).getTime() <= Date.now()) && (
+                                      <button
+                                        onClick={() => void handleRetrySchedule(schedule.id)}
+                                        disabled={retryingScheduleId === schedule.id}
+                                        className="text-[9px] text-emerald-300 hover:text-emerald-200 disabled:opacity-50"
+                                      >
+                                        {retryingScheduleId === schedule.id ? "Enviando..." : "Enviar agora"}
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => handleEditSchedule(schedule)}
                                       className="text-[9px] text-blue-400 hover:text-blue-300"
@@ -3309,7 +3459,8 @@ export default function ConversationsPage() {
                                   </div>
                                 </div>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -3317,11 +3468,11 @@ export default function ConversationsPage() {
                       <button
                         type="button"
                         onClick={() => void handleSaveSchedule()}
-                        disabled={isSavingSchedule || !scheduleGlobalDate || !scheduleGlobalTime || scheduledMessages.every(i => !i.content)}
+                        disabled={isSavingSchedule || !scheduleGlobalDate || !scheduleGlobalTime || scheduleDrafts.every(i => !i.content)}
                         className="btn-noir mt-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Save className="w-3.5 h-3.5" />
-                        {isSavingSchedule ? "Salvando..." : "Salvar Agendamento"}
+                        {isSavingSchedule ? "Salvando..." : editingScheduleId ? "Salvar Reagendamento" : "Salvar Agendamento"}
                       </button>
                     </div>
                   </div>

@@ -4769,10 +4769,13 @@ export async function setActiveWhatsAppProvider(provider: 'META' | 'EVOLUTION') 
 
 export async function getScheduledMessages(conversationId: string) {
   const workspace = await ensurePaidWorkspace();
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, { restrictOwnerToOwn: false });
+
   return prisma.scheduledMessage.findMany({
     where: {
       conversationId,
-      status: 'PENDING',
+      status: { in: ['PENDING', 'PROCESSING', 'FAILED'] },
+      conversation: conversationFilter,
     },
     orderBy: {
       scheduledFor: 'asc',
@@ -4780,13 +4783,98 @@ export async function getScheduledMessages(conversationId: string) {
   });
 }
 
+async function getCurrentUserConversationFilter(
+  workspace: Awaited<ReturnType<typeof ensurePaidWorkspace>>,
+  options: { filterConnectionId?: string; assignedToMe?: boolean; restrictOwnerToOwn?: boolean } = {}
+) {
+  const filter: any = { contact: { organizationId: workspace.organizationId } };
+  const assignedToMe = options.assignedToMe ?? true;
+
+  if (workspace.role === 'owner') {
+    if (options.filterConnectionId && options.filterConnectionId !== 'all') {
+      filter.whatsAppConnectionId = options.filterConnectionId;
+    } else if (options.restrictOwnerToOwn !== false && assignedToMe) {
+      const ownerConnection = await prisma.whatsAppConnection.findFirst({
+        where: { organizationId: workspace.organizationId, userId: workspace.id, provider: 'EVOLUTION' },
+        select: { id: true },
+      });
+      if (ownerConnection) {
+        filter.whatsAppConnectionId = ownerConnection.id;
+      } else {
+        filter.contact = { ...filter.contact, assignedUserId: workspace.id };
+      }
+    }
+
+    return filter;
+  }
+
+  const userConnection = await prisma.whatsAppConnection.findFirst({
+    where: { organizationId: workspace.organizationId, userId: workspace.id, provider: 'EVOLUTION' },
+    select: { id: true },
+  });
+
+  const connectionOr: any[] = [];
+  if (userConnection) {
+    connectionOr.push({ whatsAppConnectionId: userConnection.id });
+  } else {
+    connectionOr.push({ whatsAppConnectionId: 'none' });
+  }
+
+  const contactOr: any[] = [];
+  if (workspace.email) contactOr.push({ email: workspace.email });
+  if ((workspace as any).phone) {
+    const phoneVars = getBrazilianPhoneVariations((workspace as any).phone);
+    if (phoneVars.length) contactOr.push({ phone: { in: phoneVars } });
+  }
+  if (contactOr.length) {
+    connectionOr.push({
+      AND: [
+        { contact: { OR: contactOr } },
+        { status: 'OPEN' },
+      ],
+    });
+  }
+
+  filter.OR = connectionOr;
+
+  return filter;
+}
+
+export async function getScheduledMessageIssues(options: { filterConnectionId?: string; assignedToMe?: boolean } = {}) {
+  const workspace = await ensurePaidWorkspace();
+  const now = new Date();
+  const staleProcessingBefore = new Date(now.getTime() - 10 * 60 * 1000);
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, options);
+
+  return prisma.scheduledMessage.findMany({
+    where: {
+      conversation: conversationFilter,
+      OR: [
+        { status: 'FAILED' },
+        { status: 'PENDING', scheduledFor: { lte: now } },
+        { status: 'PROCESSING', lastAttemptAt: { lt: staleProcessingBefore } },
+      ],
+    },
+    include: {
+      conversation: {
+        include: {
+          contact: true,
+        },
+      },
+    },
+    orderBy: { scheduledFor: 'asc' },
+    take: 50,
+  });
+}
+
 export async function scheduleMessages(conversationId: string, messages: Array<{ content: string; scheduledFor: Date }>, clearQueue: boolean = true) {
   const workspace = await ensurePaidWorkspace();
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, { restrictOwnerToOwn: false });
 
   const conversation = await prisma.conversation.findFirst({
     where: {
       id: conversationId,
-      contact: { organizationId: workspace.organizationId },
+      ...conversationFilter,
     },
   });
 
@@ -4828,15 +4916,117 @@ export async function scheduleMessages(conversationId: string, messages: Array<{
   return { success: true };
 }
 
+export async function retryScheduledMessage(scheduledMessageId: string) {
+  const workspace = await ensurePaidWorkspace();
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, { restrictOwnerToOwn: false });
+
+  const scheduled = await prisma.scheduledMessage.findFirst({
+    where: {
+      id: scheduledMessageId,
+      conversation: conversationFilter,
+      status: { in: ['PENDING', 'FAILED', 'PROCESSING'] },
+    },
+    select: { id: true },
+  });
+
+  if (!scheduled) {
+    throw new Error('Mensagem agendada não encontrada ou sem permissão.');
+  }
+
+  const { dispatchScheduledMessage } = await import('@/lib/scheduledSender');
+  const result = await dispatchScheduledMessage(scheduled.id, { force: true, includeFailed: true, source: 'manual-retry' });
+
+  if (!result.success) {
+    throw new Error((result as any).error || 'Não foi possível disparar a mensagem agendada.');
+  }
+
+  revalidatePath('/conversations');
+  return result;
+}
+
+export async function retryOverdueScheduledMessages(options: { filterConnectionId?: string; assignedToMe?: boolean } = {}) {
+  const workspace = await ensurePaidWorkspace();
+  const issues = await getScheduledMessageIssues(options);
+  const { dispatchScheduledMessage } = await import('@/lib/scheduledSender');
+
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const issue of issues) {
+    const result = await dispatchScheduledMessage(issue.id, { force: true, includeFailed: true, source: `bulk-manual-retry:${workspace.id}` });
+    if (result.success) {
+      sent += 1;
+    } else {
+      failed += 1;
+      if ((result as any).error) errors.push((result as any).error);
+    }
+  }
+
+  revalidatePath('/conversations');
+  return { sent, failed, errors: Array.from(new Set(errors)).slice(0, 5) };
+}
+
+export async function rescheduleScheduledMessage(scheduledMessageId: string, scheduledFor: Date, content?: string) {
+  const workspace = await ensurePaidWorkspace();
+  const date = scheduledFor instanceof Date ? scheduledFor : new Date(scheduledFor);
+  const trimmedContent = content?.trim();
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Data inválida para reagendamento.');
+  }
+
+  if (date.getTime() <= Date.now()) {
+    throw new Error('A nova data precisa estar no futuro.');
+  }
+
+  if (content !== undefined && !trimmedContent) {
+    throw new Error('A mensagem não pode ficar vazia.');
+  }
+
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, { restrictOwnerToOwn: false });
+  const updated = await prisma.scheduledMessage.updateMany({
+    where: {
+      id: scheduledMessageId,
+      conversation: conversationFilter,
+      status: { in: ['PENDING', 'FAILED', 'PROCESSING'] },
+    },
+    data: {
+      scheduledFor: date,
+      ...(trimmedContent ? { content: trimmedContent } : {}),
+      status: 'PENDING',
+      notified: false,
+      lastError: null,
+      failedAt: null,
+      sentAt: null,
+      lastAttemptAt: null,
+      dispatchMessageId: null,
+    },
+  });
+
+  if (updated.count === 0) {
+    throw new Error('Mensagem agendada não encontrada ou sem permissão.');
+  }
+
+  const { inngest } = await import('@/inngest/client');
+  await inngest.send({
+    name: 'message/scheduled-dispatch',
+    data: { scheduledMessageId },
+  });
+
+  revalidatePath('/conversations');
+  return { success: true };
+}
+
 export async function cancelScheduledMessage(scheduledMessageId: string) {
   const workspace = await ensurePaidWorkspace();
+  const conversationFilter = await getCurrentUserConversationFilter(workspace, { restrictOwnerToOwn: false });
 
   const updated = await prisma.scheduledMessage.updateMany({
     where: {
       id: scheduledMessageId,
-      conversation: {
-        contact: { organizationId: workspace.organizationId }
-      }
+      conversation: conversationFilter,
+      status: { in: ['PENDING', 'PROCESSING', 'FAILED'] },
     },
     data: { status: 'CANCELLED' }
   });
